@@ -1,0 +1,28 @@
+# Python (apps/api)
+apps/api/.venv/
+apps/api/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Node (apps/web) - apps/web has its own .gitignore for framework specifics
+node_modules/
+
+# Vercel
+.vercel/
+
+# Env files
+.env
+.env.local
+.env*.local
+
+# Model artifacts (large binary files - see docs/agents/domain.md for versioning approach)
+apps/api/artifacts/*.joblib
+apps/api/artifacts/*.txt
+!apps/api/artifacts/.gitkeep
+
+# Data (raw dataset not committed - documented in docs/data_assumptions.md)
+data/raw/
+
+# OS
+.DS_Store
+Thumbs.db
