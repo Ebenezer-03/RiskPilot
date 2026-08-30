@@ -1,24 +1,24 @@
-# Python (apps/api)
-apps/api/.venv/
-apps/api/__pycache__/
+# Python (apps/web/api - FastAPI backend, co-located for Vercel's Root Directory requirement)
+apps/web/api/.venv/
+apps/web/.venv/
 **/__pycache__/
 *.pyc
 
-# Node (apps/web) - apps/web has its own .gitignore for framework specifics
+# Node
 node_modules/
 
 # Vercel
 .vercel/
+.env*.local
 
 # Env files
 .env
 .env.local
-.env*.local
 
 # Model artifacts (large binary files - see docs/agents/domain.md for versioning approach)
-apps/api/artifacts/*.joblib
-apps/api/artifacts/*.txt
-!apps/api/artifacts/.gitkeep
+apps/web/api/_app/artifacts/*.joblib
+apps/web/api/_app/artifacts/*.txt
+!apps/web/api/_app/artifacts/.gitkeep
 
 # Data (raw dataset not committed - documented in docs/data_assumptions.md)
 data/raw/
