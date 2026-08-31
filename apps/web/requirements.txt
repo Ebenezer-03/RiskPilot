@@ -3,3 +3,10 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 psycopg[binary]==3.2.3
 python-dotenv==1.0.1
+
+# Scoring-time ML deps (loaded by the /score endpoint - ticket 03)
+lightgbm==4.5.0
+scikit-learn==1.6.0
+shap==0.46.0
+numpy==2.2.1
+joblib==1.4.2

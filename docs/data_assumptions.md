@@ -2,20 +2,13 @@
 
 ## Status
 
-**Blocked**: acquiring the actual IEEE-CIS Fraud Detection dataset (ticket #23 / `02a`)
-requires Kaggle API credentials (a `kaggle.json` with a username and API key), which
-aren't available in this environment. This document covers the parts of `02a` that
-don't need the raw files — the feature-time contract — written from the dataset's
-publicly documented schema. **It must be revalidated against the actual columns once
-the data is downloaded**, since some of it (particularly the `V1`-`V339` block) is
-provisional until then.
-
-To unblock: a human needs to create a free Kaggle account, join the
-[IEEE-CIS Fraud Detection competition](https://www.kaggle.com/competitions/ieee-fraud-detection)
-(accepting its rules is required before download), generate an API token at
-`kaggle.com/settings` → API → "Create New Token", and provide the resulting
-`kaggle.json`. Once available, ticket `02a` continues with `kaggle competitions
-download -c ieee-fraud-detection`.
+**Resolved.** The dataset was acquired (Kaggle API token provided) and the
+`V1`-`V339` leakage check below has been run for real against the actual
+columns — see [`evaluation_report.md`](evaluation_report.md) for the full
+per-column results. Nothing in the `V` block exceeded the 0.90
+single-feature-AUC flag threshold on the train split, so no columns were
+excluded from the authorization-time feature set. The rest of this document
+(the schema table) held up against the real data as written.
 
 ## Dataset shape
 
@@ -56,18 +49,14 @@ input)?
 
 ## Leakage-risk columns excluded from the authorization-time feature set
 
-Until the `V1`-`V339` verification above is done, the training pipeline should:
-
-1. Compute per-column correlation with `isFraud` for the `V` block.
-2. Flag any `V` column whose predictive power looks disproportionate relative to its
-   documented category (Vesta groups `V` columns loosely by rank/count/entity-relation
-   type in the competition's data description).
-3. Exclude flagged columns from the authorization-time feature set, or hold them out
-   for a separate "with vs. without" PR-AUC comparison so the eval report can show
-   the effect explicitly rather than silently dropping signal.
-
-No columns are hard-excluded yet — this is a check to run once the real data is
-available, not a conclusion reachable from the schema alone.
+`api/_app/ml/train.py` computes single-feature AUC (direction-agnostic) against
+`isFraud` for every `V` column, on the train split only (never test/calibration,
+so the check itself can't leak). The top result was V303 at 0.657 — well under
+the 0.90 flag threshold set in advance. No `V` column was excluded; the full
+ranked table is in `evaluation_report.md`. This is a heuristic, not a proof of
+leakage-freedom (Vesta's exact `V`-column computation is still undisclosed),
+but it's the check this contract committed to running, and it found nothing
+disproportionate enough to warrant exclusion.
 
 ## Time-based split
 

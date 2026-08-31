@@ -1,0 +1,5 @@
+# Training-only dependencies - not part of the deployed /score function.
+# Run `pip install -r requirements.txt -r requirements-train.txt` to train locally.
+-r requirements.txt
+pandas==2.2.3
+kaggle==1.6.17
