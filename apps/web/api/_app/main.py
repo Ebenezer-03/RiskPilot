@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException
 load_dotenv(Path(__file__).resolve().parents[2] / ".env.local")
 
 from . import db
+from .routers.decisions import router as decisions_router
 from .routers.transactions import router as transactions_router
 from .schemas import ScoreRequest, ScoreResponse
 from .scoring import get_scoring_service
@@ -48,6 +49,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="RiskPilot API", lifespan=lifespan)
 app.include_router(transactions_router)
+app.include_router(decisions_router)
 
 
 @app.get("/health")
