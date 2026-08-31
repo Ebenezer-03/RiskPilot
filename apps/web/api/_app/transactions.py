@@ -178,3 +178,35 @@ def get_transaction(conn: psycopg.Connection, transaction_id: str) -> dict[str, 
             return None
         columns = [desc.name for desc in cur.description]
     return dict(zip(columns, row))
+
+
+_SELECT_LABELED_SQL_TEMPLATE = """
+SELECT transaction_id, data_source, event_time, amount, currency, merchant_id,
+       merchant_category, amount_band, is_returning_customer, is_known_device,
+       is_fraud, raw_features, created_at
+FROM transactions
+WHERE is_fraud IS NOT NULL
+{data_source_filter}
+ORDER BY event_time DESC
+LIMIT %(limit)s;
+"""
+
+
+def get_labeled_transactions(
+    conn: psycopg.Connection, *, data_source: str | None = None, limit: int = 500
+) -> list[dict[str, Any]]:
+    """The replay engine's historical window (ticket 08): only transactions
+    with a known ground-truth `is_fraud` label are replayable at all, most
+    recent `event_time` first. `data_source` narrows to one source; omit
+    for any."""
+    filter_clause = "AND data_source = %(data_source)s" if data_source else ""
+    sql = _SELECT_LABELED_SQL_TEMPLATE.format(data_source_filter=filter_clause)
+    params: dict[str, Any] = {"limit": limit}
+    if data_source:
+        params["data_source"] = data_source
+
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        columns = [desc.name for desc in cur.description]
+    return [dict(zip(columns, row)) for row in rows]

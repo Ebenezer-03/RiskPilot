@@ -18,10 +18,10 @@ edited later via the Policy Lab (ticket 09), not hardcoded permanently.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, get_args
 
-from .segments import AmountBand, MerchantCategory
+from .segments import AmountBand, MerchantCategory, segment_label
 
 Action = Literal["ALLOW", "STEP_UP", "REVIEW", "BLOCK"]
 ACTIONS: tuple[Action, ...] = get_args(Action)
@@ -80,23 +80,56 @@ POLICY_VERSION = "policy-v1.0"
 COST_MATRIX_VERSION = "cost-matrix-v1.0"
 
 
-def default_cost_profile(amount_band: AmountBand, is_returning_customer: bool, is_known_device: bool) -> CostProfile:
-    false_decline_rate = (
-        FALSE_DECLINE_RATE_BASE
-        + (0.0 if is_returning_customer else FALSE_DECLINE_NEW_CUSTOMER_BONUS)
-        + FALSE_DECLINE_AMOUNT_BAND_BONUS[amount_band]
+@dataclass(frozen=True)
+class CostAssumptions:
+    """The editable knobs behind `default_cost_profile` - split out from the
+    module-level constants above (ticket 08/09) so a policy (replay engine,
+    Policy Lab) can supply an alternate set without touching this module's
+    own day-1 defaults. `DEFAULT_COST_ASSUMPTIONS` below is exactly those
+    defaults, wrapped - existing callers that never pass `assumptions`
+    explicitly see no behavior change.
+    """
+
+    fraud_loss_rate_base: float = FRAUD_LOSS_RATE_BASE
+    fraud_loss_new_device_bonus: float = FRAUD_LOSS_NEW_DEVICE_BONUS
+    false_decline_rate_base: float = FALSE_DECLINE_RATE_BASE
+    false_decline_new_customer_bonus: float = FALSE_DECLINE_NEW_CUSTOMER_BONUS
+    false_decline_amount_band_bonus: dict[AmountBand, float] = field(
+        default_factory=lambda: dict(FALSE_DECLINE_AMOUNT_BAND_BONUS)
     )
-    fraud_loss_rate = FRAUD_LOSS_RATE_BASE + (0.0 if is_known_device else FRAUD_LOSS_NEW_DEVICE_BONUS)
+    review_cost: float = REVIEW_COST
+    review_catch_rate: float = REVIEW_CATCH_RATE
+    review_friction_rate: float = REVIEW_FRICTION_RATE
+    step_up_friction_cost: float = STEP_UP_FRICTION_COST
+    step_up_prevent_rate: float = STEP_UP_PREVENT_RATE
+    step_up_abandonment_rate: float = STEP_UP_ABANDONMENT_RATE
+
+
+DEFAULT_COST_ASSUMPTIONS = CostAssumptions()
+
+
+def default_cost_profile(
+    amount_band: AmountBand,
+    is_returning_customer: bool,
+    is_known_device: bool,
+    assumptions: CostAssumptions = DEFAULT_COST_ASSUMPTIONS,
+) -> CostProfile:
+    false_decline_rate = (
+        assumptions.false_decline_rate_base
+        + (0.0 if is_returning_customer else assumptions.false_decline_new_customer_bonus)
+        + assumptions.false_decline_amount_band_bonus[amount_band]
+    )
+    fraud_loss_rate = assumptions.fraud_loss_rate_base + (0.0 if is_known_device else assumptions.fraud_loss_new_device_bonus)
 
     return CostProfile(
         fraud_loss_rate=fraud_loss_rate,
         false_decline_rate=false_decline_rate,
-        review_cost=REVIEW_COST,
-        review_catch_rate=REVIEW_CATCH_RATE,
-        review_friction_rate=REVIEW_FRICTION_RATE,
-        step_up_friction_cost=STEP_UP_FRICTION_COST,
-        step_up_prevent_rate=STEP_UP_PREVENT_RATE,
-        step_up_abandonment_rate=STEP_UP_ABANDONMENT_RATE,
+        review_cost=assumptions.review_cost,
+        review_catch_rate=assumptions.review_catch_rate,
+        review_friction_rate=assumptions.review_friction_rate,
+        step_up_friction_cost=assumptions.step_up_friction_cost,
+        step_up_prevent_rate=assumptions.step_up_prevent_rate,
+        step_up_abandonment_rate=assumptions.step_up_abandonment_rate,
     )
 
 
@@ -109,13 +142,17 @@ def resolve_cost_profile(
     is_known_device: bool,
     merchant_overrides: dict[str, CostProfile] | None = None,
     category_overrides: dict[str, CostProfile] | None = None,
+    assumptions: CostAssumptions = DEFAULT_COST_ASSUMPTIONS,
 ) -> tuple[CostProfile, CostProfileSource]:
     """Fallback chain: merchant-specific -> merchant-category -> global
     default. `merchant_overrides`/`category_overrides` are empty by default -
-    there is no policy registry yet (that's ticket 09's Policy Lab); this
+    there is no per-merchant policy registry (a policy, ticket 09, is one
+    global CostAssumptions + review capacity, not per-merchant); this
     function's job today is the *mechanism*, exercised and tested with
-    injected overrides, ready for ticket 09 to populate for real. Returns
-    (profile, source) so callers/reason-codes can say which tier was used.
+    injected overrides, ready to be populated for real if that need arises.
+    `assumptions` is what a policy (ticket 08's replay engine, ticket 09's
+    Policy Lab) actually varies. Returns (profile, source) so callers/
+    reason-codes can say which tier was used.
     """
     merchant_overrides = merchant_overrides or {}
     category_overrides = category_overrides or {}
@@ -124,7 +161,7 @@ def resolve_cost_profile(
         return merchant_overrides[merchant_id], "merchant"
     if merchant_category in category_overrides:
         return category_overrides[merchant_category], "merchant_category"
-    return default_cost_profile(amount_band, is_returning_customer, is_known_device), "global_default"
+    return default_cost_profile(amount_band, is_returning_customer, is_known_device, assumptions), "global_default"
 
 
 def compute_expected_costs(probability: float, amount: float, cost_profile: CostProfile) -> dict[Action, float]:
@@ -184,11 +221,7 @@ def build_reason_codes(
     ranked = sorted(ACTIONS, key=lambda a: expected_costs[a])
     runner_up = ranked[1]
 
-    segment = (
-        f"{merchant_category}/{amount_band}/"
-        f"{'returning' if is_returning_customer else 'new'}_customer/"
-        f"{'known' if is_known_device else 'new'}_device"
-    )
+    segment = segment_label(merchant_category, amount_band, is_returning_customer, is_known_device)
 
     return [
         f"segment: {segment}",
