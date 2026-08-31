@@ -1,6 +1,6 @@
 """Offline training script for the RiskPilot fraud detector.
 
-Run from apps/web:  python -m api._app.ml.train
+Run from apps/web/api:  python -m _app.ml.train
 (needs requirements-train.txt installed, and data/raw/ieee-fraud-detection/
 populated - see docs/data_assumptions.md for how to acquire it.)
 
@@ -46,9 +46,15 @@ from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
 from .features import (
     ALL_FEATURE_COLUMNS,
+    CALIBRATION_VERSION,
+    CALIBRATOR_ARTIFACT_FILENAME,
     CATEGORICAL_COLUMNS,
+    FEATURE_SCHEMA_ARTIFACT_FILENAME,
     FEATURE_SCHEMA_VERSION,
     ID_COLUMN,
+    LOGREG_ARTIFACT_FILENAME,
+    MODEL_ARTIFACT_FILENAME,
+    MODEL_VERSION,
     NUMERIC_COLUMNS,
     TARGET_COLUMN,
     TIME_COLUMN,
@@ -57,9 +63,6 @@ from .features import (
     coerce_categorical_dtypes,
 )
 
-
-MODEL_VERSION = "fraud-model-v1.0"
-CALIBRATION_VERSION = "isotonic-v1.0"
 DECISION_THRESHOLD_FOR_REPORT = 0.5  # reporting only - the real system uses expected-cost, not a fixed cutoff (ticket 05)
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -268,13 +271,13 @@ def main() -> None:
     metrics_logreg = compute_metrics(y_test, logreg_prob_test)
 
     print("Saving artifacts...")
-    model_path = ARTIFACTS_DIR / f"fraud_model_{MODEL_VERSION}.txt"
+    model_path = ARTIFACTS_DIR / MODEL_ARTIFACT_FILENAME
     booster.save_model(str(model_path))
-    calibrator_path = ARTIFACTS_DIR / f"calibrator_{CALIBRATION_VERSION}.joblib"
+    calibrator_path = ARTIFACTS_DIR / CALIBRATOR_ARTIFACT_FILENAME
     joblib.dump(calibrator, calibrator_path)
-    logreg_path = ARTIFACTS_DIR / f"logreg_baseline_{MODEL_VERSION}.joblib"
+    logreg_path = ARTIFACTS_DIR / LOGREG_ARTIFACT_FILENAME
     joblib.dump(logreg, logreg_path)
-    schema_path = ARTIFACTS_DIR / f"feature_schema_{FEATURE_SCHEMA_VERSION}.json"
+    schema_path = ARTIFACTS_DIR / FEATURE_SCHEMA_ARTIFACT_FILENAME
     schema_path.write_text(json.dumps({
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "categorical_columns": CATEGORICAL_COLUMNS,

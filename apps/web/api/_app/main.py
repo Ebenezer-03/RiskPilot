@@ -6,11 +6,32 @@ through this API.
 """
 
 import os
+from contextlib import asynccontextmanager
 
 import psycopg
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
-app = FastAPI(title="RiskPilot API")
+from .schemas import ScoreRequest, ScoreResponse
+from .scoring import get_scoring_service
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Loads the model/calibrator artifacts once at cold start, not
+    per-request. Deliberately not fatal on failure - a missing/corrupt
+    artifact should degrade /score (see its own try/except) rather than
+    take down /health and the rest of the API with it.
+    """
+    try:
+        get_scoring_service()
+    except Exception as exc:  # noqa: BLE001 - any artifact-loading failure (missing file,
+        # corrupt joblib/LightGBM parse error, version mismatch) should degrade /score,
+        # not take the whole app down at startup.
+        print(f"[startup] scoring service unavailable: {exc}")
+    yield
+
+
+app = FastAPI(title="RiskPilot API", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -36,3 +57,17 @@ async def health() -> dict:
 @app.get("/")
 async def root() -> dict:
     return {"service": "riskpilot-api"}
+
+
+@app.post("/score", response_model=ScoreResponse)
+async def score(payload: ScoreRequest) -> ScoreResponse:
+    try:
+        service = get_scoring_service()
+    except Exception as exc:  # noqa: BLE001 - see the lifespan handler's comment above
+        # Model-unavailable fallback: fail loudly and explicitly rather than
+        # guessing at a probability. The caller (decision engine, ticket 05)
+        # is responsible for its own conservative default when this happens.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    result = service.score(payload.features)
+    return ScoreResponse(transaction_id=payload.transaction_id, **result)

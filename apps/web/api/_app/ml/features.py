@@ -14,6 +14,15 @@ produced it.
 from __future__ import annotations
 
 FEATURE_SCHEMA_VERSION = "features-v1.0"
+MODEL_VERSION = "fraud-model-v1.0"
+CALIBRATION_VERSION = "isotonic-v1.0"
+
+# Canonical artifact filenames - shared between train.py (writes them) and
+# scoring.py (reads them), so the two can never silently drift apart.
+MODEL_ARTIFACT_FILENAME = f"fraud_model_{MODEL_VERSION}.txt"
+CALIBRATOR_ARTIFACT_FILENAME = f"calibrator_{CALIBRATION_VERSION}.joblib"
+LOGREG_ARTIFACT_FILENAME = f"logreg_baseline_{MODEL_VERSION}.joblib"
+FEATURE_SCHEMA_ARTIFACT_FILENAME = f"feature_schema_{FEATURE_SCHEMA_VERSION}.json"
 
 ID_COLUMN = "TransactionID"
 TARGET_COLUMN = "isFraud"
