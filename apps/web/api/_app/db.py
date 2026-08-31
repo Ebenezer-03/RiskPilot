@@ -50,6 +50,40 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_data_source ON transactions (data_source);
 CREATE INDEX IF NOT EXISTS idx_transactions_merchant_category ON transactions (merchant_category);
+
+-- Decision audit trail (ticket 07). One row per /decide call made against a
+-- known transaction_id (a decide call with no transaction_id has nothing to
+-- audit by ID, so isn't persisted here - see routers/decisions.py). No
+-- ON CONFLICT/upsert: re-deciding the same transaction is a legitimate,
+-- separately-auditable event, not a duplicate to collapse away, so a
+-- transaction can have more than one row here over time.
+CREATE TABLE IF NOT EXISTS decisions (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES transactions (transaction_id),
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    data_source TEXT NOT NULL CHECK (data_source IN ('synthetic', 'ieee_cis', 'live_razorpay')),
+    probability_used DOUBLE PRECISION NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('ALLOW', 'STEP_UP', 'REVIEW', 'BLOCK')),
+    expected_costs JSONB NOT NULL,
+    reason_codes JSONB NOT NULL,
+    merchant_category TEXT NOT NULL,
+    amount_band TEXT NOT NULL CHECK (amount_band IN ('low', 'medium', 'high')),
+    is_returning_customer BOOLEAN NOT NULL,
+    is_known_device BOOLEAN NOT NULL,
+    cost_profile_source TEXT NOT NULL CHECK (cost_profile_source IN ('merchant', 'merchant_category', 'global_default')),
+    -- Nullable: the probability decided on isn't always the output of a real
+    -- scored /score call (e.g. a synthetic transaction's own fabricated
+    -- probability) - null here honestly records "not applicable" rather
+    -- than a fabricated version string.
+    model_version TEXT,
+    calibration_version TEXT,
+    feature_schema_version TEXT,
+    segment_definition_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    cost_matrix_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_transaction_id ON decisions (transaction_id);
 """
 
 

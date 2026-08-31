@@ -21,6 +21,12 @@ MERCHANT_CATEGORIES: list[str] = list(get_args(MerchantCategory))
 AmountBand = Literal["low", "medium", "high"]
 AMOUNT_BANDS: list[str] = list(get_args(AmountBand))
 
+# Bumped whenever the segment vocabulary or amount-band thresholds change -
+# stored on every decision (ticket 07's audit trail) so a past decision
+# remains attributable to the exact segment definition that produced it,
+# even after this module evolves.
+SEGMENT_DEFINITION_VERSION = "segments-v1.0"
+
 _LOW_MAX = 1_000
 _MEDIUM_MAX = 15_000
 

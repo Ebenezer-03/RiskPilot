@@ -66,6 +66,19 @@ STEP_UP_PREVENT_RATE = 0.70  # from the spec's own worked example
 STEP_UP_ABANDONMENT_RATE = 0.05  # not spec-specified; "an abandonment-probability
 # proxy" per the spec's own wording - 5% is a documented illustrative choice.
 
+# Versioning for the audit trail (ticket 07). There is no Policy Lab yet
+# (ticket 09) to mint new policy/cost-matrix versions at runtime, so these
+# are the fixed day-1 defaults - bumped by hand if this module's constants
+# change, until the Policy Lab makes versioning dynamic. Kept as two
+# separate constants (not one) because they're conceptually distinct even
+# though they change together today: POLICY_VERSION identifies the decision
+# policy (which actions exist, the tie-break rule, the fallback chain
+# mechanism), COST_MATRIX_VERSION identifies just the cost constants above -
+# the Policy Lab will let a candidate cost matrix change under a fixed
+# policy, or vice versa.
+POLICY_VERSION = "policy-v1.0"
+COST_MATRIX_VERSION = "cost-matrix-v1.0"
+
 
 def default_cost_profile(amount_band: AmountBand, is_returning_customer: bool, is_known_device: bool) -> CostProfile:
     false_decline_rate = (

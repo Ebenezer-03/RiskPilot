@@ -67,6 +67,20 @@ class DecideRequest(BaseModel):
     amount: float | None = None
     is_returning_customer: bool | None = None
     is_known_device: bool | None = None
+    model_version: str | None = Field(
+        default=None,
+        description=(
+            "Version of the model that produced `probability`, if any - forward this "
+            "from a prior /score call's response. Left null when the probability being "
+            "decided on didn't come from the real detector (e.g. a synthetic "
+            "transaction's own fabricated probability); recorded on the audit trail "
+            "(ticket 07) exactly as given, not guessed."
+        ),
+    )
+    calibration_version: str | None = Field(default=None, description="Same as model_version, for the calibrator.")
+    feature_schema_version: str | None = Field(
+        default=None, description="Same as model_version, for the feature schema the score was computed against."
+    )
 
 
 class DecideResponse(BaseModel):
@@ -128,6 +142,32 @@ class ReviewAllocationResponse(BaseModel):
     results: list[ReviewAllocationResultItem]
 
 
+class DecisionRecord(BaseModel):
+    """One persisted /decide call (ticket 07's audit trail) - the full
+    version metadata plus the same decision fields DecideResponse exposes,
+    so an audit entry is exactly what a caller would have seen at the time."""
+
+    id: int
+    transaction_id: str
+    decided_at: datetime
+    data_source: DataSource
+    probability_used: float
+    action: Action
+    expected_costs: dict[Action, float]
+    reason_codes: list[str]
+    merchant_category: MerchantCategory
+    amount_band: AmountBand
+    is_returning_customer: bool
+    is_known_device: bool
+    cost_profile_source: CostProfileSource
+    model_version: str | None
+    calibration_version: str | None
+    feature_schema_version: str | None
+    segment_definition_version: str
+    policy_version: str
+    cost_matrix_version: str
+
+
 class TransactionRecord(BaseModel):
     transaction_id: str
     data_source: DataSource
@@ -142,3 +182,12 @@ class TransactionRecord(BaseModel):
     is_fraud: bool | None
     raw_features: dict[str, Any]
     created_at: datetime
+
+
+class AuditTraceResponse(BaseModel):
+    transaction: TransactionRecord
+    # Chronological (oldest first) - see audit.get_decisions_for_transaction.
+    # Usually one entry; more than one means the transaction was decided on
+    # more than once (e.g. re-decided after a policy change), which is a
+    # legitimate, separately-auditable event, not deduplicated away.
+    decisions: list[DecisionRecord]

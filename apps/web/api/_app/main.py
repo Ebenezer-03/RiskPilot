@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException
 load_dotenv(Path(__file__).resolve().parents[2] / ".env.local")
 
 from . import db
+from .routers.audit import router as audit_router
 from .routers.decisions import router as decisions_router
 from .routers.review_allocation import router as review_allocation_router
 from .routers.transactions import router as transactions_router
@@ -52,6 +53,7 @@ app = FastAPI(title="RiskPilot API", lifespan=lifespan)
 app.include_router(transactions_router)
 app.include_router(decisions_router)
 app.include_router(review_allocation_router)
+app.include_router(audit_router)
 
 
 @app.get("/health")
