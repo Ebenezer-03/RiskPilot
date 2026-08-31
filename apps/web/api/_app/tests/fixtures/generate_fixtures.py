@@ -22,20 +22,11 @@ from ...ml.features import (
     MODEL_ARTIFACT_FILENAME,
     add_derived_features,
     coerce_categorical_dtypes,
+    row_to_json_safe,
 )
 from ...ml.train import ARTIFACTS_DIR, load_data, time_ordered_split
 
 FIXTURES_DIR = Path(__file__).resolve().parent
-
-
-def _row_to_json_safe(row) -> dict:
-    obj = row.astype(object).where(row.notna(), None)
-    out = {}
-    for key, value in obj.items():
-        if hasattr(value, "item"):
-            value = value.item()
-        out[key] = value
-    return out
 
 
 def main() -> None:
@@ -64,7 +55,7 @@ def main() -> None:
             "transaction_id": int(row["TransactionID"]),
             "true_label": int(row["isFraud"]),
             "calibrated_probability_at_generation_time": round(float(row["_calibrated_prob"]), 4),
-            "features": _row_to_json_safe(row[ALL_FEATURE_COLUMNS]),
+            "features": row_to_json_safe(row[ALL_FEATURE_COLUMNS]),
         }
         out_path = FIXTURES_DIR / f"{name}.json"
         out_path.write_text(json.dumps(payload, indent=2))

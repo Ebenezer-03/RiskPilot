@@ -5,12 +5,19 @@ The Next.js frontend never talks to Postgres directly - it always goes
 through this API.
 """
 
-import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-import psycopg
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 
+# apps/web/.env.local, pulled via `vercel env pull` - `vercel dev`/the deployed
+# platform inject these automatically, but a plain `uvicorn`/`pytest` run
+# doesn't, so load it explicitly (silently does nothing if absent).
+load_dotenv(Path(__file__).resolve().parents[2] / ".env.local")
+
+from . import db
+from .routers.transactions import router as transactions_router
 from .schemas import ScoreRequest, ScoreResponse
 from .scoring import get_scoring_service
 
@@ -28,24 +35,28 @@ async def lifespan(_: FastAPI):
         # corrupt joblib/LightGBM parse error, version mismatch) should degrade /score,
         # not take the whole app down at startup.
         print(f"[startup] scoring service unavailable: {exc}")
+
+    try:
+        with db.get_connection() as conn:
+            db.ensure_schema(conn)
+    except Exception as exc:  # noqa: BLE001 - schema creation is best-effort at startup;
+        # /health and /transactions both surface their own DB errors per-request either way.
+        print(f"[startup] schema setup skipped: {exc}")
+
     yield
 
 
 app = FastAPI(title="RiskPilot API", lifespan=lifespan)
+app.include_router(transactions_router)
 
 
 @app.get("/health")
 async def health() -> dict:
     """Liveness check, including DB connectivity via Supabase Postgres."""
-    # POSTGRES_URL (the pooled connection string) from the Vercel/Supabase Marketplace
-    # integration ships with a malformed trailing query param (`&supa=base-pooler.x`)
-    # that psycopg's URI parser rejects. POSTGRES_URL_NON_POOLING is well-formed;
-    # switch back to the pooled URL once that upstream issue is confirmed fixed.
-    db_url = os.environ.get("POSTGRES_URL_NON_POOLING") or os.environ.get("POSTGRES_URL")
-    if not db_url:
+    if not db.get_database_url():
         return {"status": "ok", "db": "not_configured"}
     try:
-        with psycopg.connect(db_url, connect_timeout=5) as conn:
+        with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()

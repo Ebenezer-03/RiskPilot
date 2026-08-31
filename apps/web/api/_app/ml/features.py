@@ -87,3 +87,18 @@ def coerce_categorical_dtypes(df):
         if col in df.columns:
             df[col] = df[col].astype("category")
     return df
+
+
+def row_to_json_safe(row) -> dict:
+    """A single pandas row (Series) -> plain-Python dict safe for
+    json.dumps/psycopg's Json() - numpy scalars (float32, int64, category
+    values) aren't natively JSON-serializable, and NaN needs to become None.
+    Shared by the fixture generator and the IEEE-CIS sample loader so this
+    bridging logic exists in exactly one place."""
+    obj = row.astype(object).where(row.notna(), None)
+    out = {}
+    for key, value in obj.items():
+        if hasattr(value, "item"):
+            value = value.item()
+        out[key] = value
+    return out
