@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -256,10 +256,14 @@ class ReplayRequest(BaseModel):
 
 class SegmentReplayMetricsResponse(BaseModel):
     transaction_count: int
+    fraud_count: int
+    allow_count: int
     fraud_loss: float
     legitimate_gmv_blocked: float
+    legitimate_blocked_count: int
     transactions_caught: int
     review_count: int
+    review_eligible_count: int
     net_expected_loss: float
 
 
@@ -280,4 +284,87 @@ class ReplayResponse(BaseModel):
     transactions_skipped: int
     aggregate: ReplayComparisonResponse
     by_segment: dict[str, ReplayComparisonResponse]
+    # One value for the whole window (both policies decide from the same
+    # probabilities) - see replay.compute_calibration_brier_score.
+    calibration_brier_score: float
+    # Calendar days spanned by the window - see replay.compute_window_days.
+    window_days: int
     disclaimer: str
+
+
+# --- Policy registry (ticket 09) --------------------------------------------------
+
+# All six values from issue #1's Implementation Decisions, though only
+# DRAFT -> SIMULATED -> ACTIVE is ever produced by this API today -
+# APPROVED/CANARY/ROLLED_BACK are valid values the DB CHECK constraint
+# already allows, kept here so the type doesn't lie about the DB schema,
+# per this repo's stated day-1 scope for ticket 09.
+PolicyStatus = Literal["DRAFT", "SIMULATED", "APPROVED", "CANARY", "ACTIVE", "ROLLED_BACK"]
+
+
+class PolicyWriteRequest(BaseModel):
+    """Shared shape for create and update - a full replacement of the
+    editable fields, not a partial PATCH-merge (simpler and unambiguous for
+    a policy that's still DRAFT and has no other readers yet)."""
+
+    name: str
+    cost_assumptions: CostAssumptionsRequest = Field(default_factory=CostAssumptionsRequest)
+    review_capacity: int = Field(default=DEFAULT_REVIEW_CAPACITY, ge=0)
+
+
+class PolicyCreateRequest(PolicyWriteRequest):
+    policy_id: str = Field(description="Caller-chosen unique slug, e.g. 'policy-2026-09-conservative'.")
+
+
+class PolicyRecord(BaseModel):
+    policy_id: str
+    name: str
+    status: PolicyStatus
+    cost_assumptions: CostAssumptionsRequest
+    review_capacity: int
+    baseline_policy_id: str | None
+    replay_result: dict[str, Any] | None
+    guardrail_violations: list[dict[str, Any]] | None
+    created_at: datetime
+    updated_at: datetime
+    simulated_at: datetime | None
+    activated_at: datetime | None
+
+
+class PolicySimulateRequest(BaseModel):
+    baseline_policy_id: str | None = Field(
+        default=None,
+        description=(
+            "Policy to replay this candidate against. Defaults to the most recently "
+            "activated ACTIVE policy, or the day-1 default policy (cost_engine's own "
+            "constants) if no policy has ever been activated yet."
+        ),
+    )
+    window: ReplayWindowRequest = Field(default_factory=ReplayWindowRequest)
+
+
+class GuardrailThresholdsRequest(BaseModel):
+    """All optional - unset fields fall back to guardrails.DEFAULT_GUARDRAIL_THRESHOLDS."""
+
+    max_approval_rate_drop: float | None = Field(default=None, ge=0)
+    min_segment_sample_size: int | None = Field(default=None, ge=0)
+    max_false_positive_rate_increase: float | None = Field(default=None, ge=0)
+    max_calibration_brier_score: float | None = Field(default=None, ge=0)
+
+
+class PolicyPromoteRequest(BaseModel):
+    thresholds: GuardrailThresholdsRequest = Field(default_factory=GuardrailThresholdsRequest)
+
+
+class GuardrailViolationResponse(BaseModel):
+    guardrail: str
+    detail: str
+
+
+class PolicyPromotionResponse(BaseModel):
+    policy: PolicyRecord
+    approved: bool
+    # Empty when approved=True. Non-empty (and the policy stays SIMULATED)
+    # when approved=False - issue #1: "a rejected candidate policy stays in
+    # SIMULATED with the violated guardrail(s) reported."
+    violations: list[GuardrailViolationResponse]

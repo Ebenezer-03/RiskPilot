@@ -5,6 +5,8 @@ worth unit-testing directly, on top of the API-seam test in
 test_simulation_api.py.
 """
 
+from datetime import datetime, timezone
+
 from _app.cost_engine import DEFAULT_COST_ASSUMPTIONS, CostAssumptions
 from _app.policy import DEFAULT_POLICY, Policy
 from _app.replay import ReplayTransaction, run_replay
@@ -23,6 +25,7 @@ def test_identical_baseline_and_candidate_policies_produce_zero_delta():
             is_known_device=True,
             is_fraud=False,
             probability=0.02,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
         ReplayTransaction(
             transaction_id="txn_2",
@@ -33,6 +36,7 @@ def test_identical_baseline_and_candidate_policies_produce_zero_delta():
             is_known_device=False,
             is_fraud=True,
             probability=0.95,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     ]
 
@@ -44,7 +48,10 @@ def test_identical_baseline_and_candidate_policies_produce_zero_delta():
         candidate_policy=DEFAULT_POLICY,
     )
 
-    assert result.aggregate.delta == type(result.aggregate.delta)(0, 0.0, 0.0, 0, 0, 0.0)
+    metrics_cls = type(result.aggregate.delta)
+    zero_fields = {name: (0.0 if name in ("fraud_loss", "legitimate_gmv_blocked", "net_expected_loss") else 0)
+                   for name in metrics_cls.__dataclass_fields__}
+    assert result.aggregate.delta == metrics_cls(**zero_fields)
     for comparison in result.by_segment.values():
         assert comparison.baseline == comparison.candidate
 
@@ -65,6 +72,7 @@ def test_aggregate_metrics_match_hand_computed_arithmetic():
             is_known_device=True,
             is_fraud=False,
             probability=0.02,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
         ReplayTransaction(
             transaction_id="txn_2",
@@ -75,6 +83,7 @@ def test_aggregate_metrics_match_hand_computed_arithmetic():
             is_known_device=False,
             is_fraud=True,
             probability=0.95,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     ]
 
@@ -88,14 +97,22 @@ def test_aggregate_metrics_match_hand_computed_arithmetic():
 
     baseline = result.aggregate.baseline
     assert baseline.transaction_count == 2
+    assert baseline.fraud_count == 1  # txn_2
+    assert baseline.allow_count == 1  # txn_1
     # txn_2 is truly fraud and BLOCK's catch probability is 1.0 -> fully
     # prevented, contributes 0 realized fraud loss.
     assert baseline.fraud_loss == 0.0
     # Neither transaction is a legitimate one that got BLOCKed.
     assert baseline.legitimate_gmv_blocked == 0.0
+    assert baseline.legitimate_blocked_count == 0
     assert baseline.transactions_caught == 1  # txn_2, BLOCK != ALLOW
     assert baseline.review_count == 0
+    assert baseline.review_eligible_count == 0
     assert round(baseline.net_expected_loss, 2) == round(11.0 + 400.0, 2)
+    # Brier score: (0.02-0)^2 + (0.95-1)^2, averaged over 2 transactions.
+    assert round(result.calibration_brier_score, 6) == round(((0.02**2) + (0.05**2)) / 2, 6)
+    # Both transactions share the same event_time -> a single-day window.
+    assert result.window_days == 1
 
 
 def test_downgrading_review_capacity_shows_correct_delta_direction():
@@ -117,6 +134,7 @@ def test_downgrading_review_capacity_shows_correct_delta_direction():
             is_known_device=True,
             is_fraud=False,
             probability=0.3,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     ]
 
@@ -134,6 +152,11 @@ def test_downgrading_review_capacity_shows_correct_delta_direction():
     assert result.aggregate.baseline.review_count == 1
     assert result.aggregate.candidate.review_count == 0
     assert result.aggregate.delta.review_count == -1
+    # Both policies chose REVIEW before the capacity cap applied -
+    # review_eligible_count reflects that raw choice, unaffected by either
+    # policy's own review_capacity.
+    assert result.aggregate.baseline.review_eligible_count == 1
+    assert result.aggregate.candidate.review_eligible_count == 1
     assert round(result.aggregate.baseline.net_expected_loss, 2) == 369.5
     assert round(result.aggregate.candidate.net_expected_loss, 2) == 820.0
     assert result.aggregate.delta.net_expected_loss > 0
@@ -150,6 +173,7 @@ def test_per_segment_breakdown_matches_aggregate():
             is_known_device=True,
             is_fraud=False,
             probability=0.02,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
         ReplayTransaction(
             transaction_id="txn_2",
@@ -160,6 +184,7 @@ def test_per_segment_breakdown_matches_aggregate():
             is_known_device=False,
             is_fraud=True,
             probability=0.95,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     ]
 
@@ -200,6 +225,7 @@ def test_disclaimer_is_always_present():
             is_known_device=True,
             is_fraud=False,
             probability=0.02,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
     ]
     result = run_replay(
@@ -211,3 +237,39 @@ def test_disclaimer_is_always_present():
     )
     assert "offline estimate" in result.disclaimer.lower()
     assert "not a causal" in result.disclaimer.lower()
+
+
+def test_window_days_spans_the_earliest_to_latest_event_time():
+    transactions = [
+        ReplayTransaction(
+            transaction_id="txn_1",
+            amount=500,
+            merchant_category="food_delivery",
+            amount_band="low",
+            is_returning_customer=True,
+            is_known_device=True,
+            is_fraud=False,
+            probability=0.02,
+            event_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+        ReplayTransaction(
+            transaction_id="txn_2",
+            amount=500,
+            merchant_category="food_delivery",
+            amount_band="low",
+            is_returning_customer=True,
+            is_known_device=True,
+            is_fraud=False,
+            probability=0.02,
+            event_time=datetime(2026, 1, 11, tzinfo=timezone.utc),
+        ),
+    ]
+    result = run_replay(
+        transactions,
+        baseline_policy_id="baseline",
+        baseline_policy=DEFAULT_POLICY,
+        candidate_policy_id="candidate",
+        candidate_policy=DEFAULT_POLICY,
+    )
+    # Jan 1 -> Jan 11 is 10 days apart, +1 to count both endpoint days.
+    assert result.window_days == 11

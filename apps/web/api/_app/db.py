@@ -84,6 +84,35 @@ CREATE TABLE IF NOT EXISTS decisions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_transaction_id ON decisions (transaction_id);
+
+-- Policy registry (ticket 09). All six lifecycle values from issue #1's
+-- Implementation Decisions are present in the CHECK constraint from day
+-- one, but only DRAFT -> SIMULATED -> ACTIVE is ever written by this
+-- system today - APPROVED/CANARY/ROLLED_BACK are reachable in the schema,
+-- not yet in the API (see policy_registry.py/routers/policies.py).
+CREATE TABLE IF NOT EXISTS policies (
+    id BIGSERIAL PRIMARY KEY,
+    policy_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT', 'SIMULATED', 'APPROVED', 'CANARY', 'ACTIVE', 'ROLLED_BACK')),
+    cost_assumptions JSONB NOT NULL,
+    review_capacity INT NOT NULL,
+    -- Populated by POST /policies/{id}/simulate; consumed (not recomputed)
+    -- by POST /policies/{id}/promote's guardrail check, so a promotion
+    -- decision is always traceable to the exact replay it was judged
+    -- against.
+    baseline_policy_id TEXT,
+    replay_result JSONB,
+    -- The most recent promotion attempt's guardrail violations, if any -
+    -- null while DRAFT/never-attempted, or after a successful promotion.
+    guardrail_violations JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    simulated_at TIMESTAMPTZ,
+    activated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_policies_status ON policies (status);
 """
 
 
