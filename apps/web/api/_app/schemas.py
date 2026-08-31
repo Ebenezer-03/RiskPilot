@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .cost_engine import Action, CostProfileSource
+from .cost_engine import ACTIONS, Action, CostProfileSource
 from .db import DataSource
 from .segments import AmountBand, MerchantCategory
 
@@ -80,6 +80,52 @@ class DecideResponse(BaseModel):
     is_known_device: bool
     cost_profile_source: CostProfileSource
     reason_codes: list[str]
+
+
+class ReviewAllocationItem(BaseModel):
+    transaction_id: str = Field(description="Identifies the candidate in the response; not looked up server-side.")
+    expected_costs: dict[Action, float] = Field(
+        description=(
+            "All four expected costs for this REVIEW-eligible decision, as returned by "
+            "POST /decide's expected_costs field."
+        ),
+    )
+
+    @field_validator("expected_costs")
+    @classmethod
+    def _requires_all_four_actions(cls, value: dict[Action, float]) -> dict[Action, float]:
+        # dict[Action, float] only validates that present keys are valid
+        # Actions - it doesn't require all four. The allocator's savings
+        # formula needs REVIEW plus every non-REVIEW action, so a partial
+        # dict must fail loudly here (422) rather than KeyError deep inside
+        # allocate_reviews (500).
+        missing = set(ACTIONS) - set(value)
+        if missing:
+            raise ValueError(f"expected_costs is missing action(s): {sorted(missing)}")
+        return value
+
+
+class ReviewAllocationRequest(BaseModel):
+    items: list[ReviewAllocationItem] = Field(
+        description="A batch of REVIEW-eligible decisions (i.e. /decide already chose REVIEW for each).",
+    )
+    daily_capacity: int = Field(ge=0, description="Hard cap on how many of `items` may actually be routed to review.")
+
+
+class ReviewAllocationResultItem(BaseModel):
+    transaction_id: str
+    expected_savings_from_review: float
+    routed_to_review: bool
+    final_action: Action
+
+
+class ReviewAllocationResponse(BaseModel):
+    daily_capacity: int
+    total_candidates: int
+    routed_to_review_count: int
+    # Ordered by expected_savings_from_review descending - highest-value
+    # review candidates first, ties broken by input order.
+    results: list[ReviewAllocationResultItem]
 
 
 class TransactionRecord(BaseModel):
