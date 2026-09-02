@@ -65,7 +65,7 @@ class DecideRequest(BaseModel):
     )
     merchant_id: str | None = None
     merchant_category: MerchantCategory | None = None
-    amount: float | None = None
+    amount: float | None = Field(default=None, gt=0)
     is_returning_customer: bool | None = None
     is_known_device: bool | None = None
     model_version: str | None = Field(

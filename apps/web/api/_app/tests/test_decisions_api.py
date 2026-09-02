@@ -135,6 +135,24 @@ def test_out_of_range_probability_returns_422():
     assert response.status_code == 422
 
 
+def test_negative_amount_returns_422():
+    """A negative amount isn't a real transaction and inverts every cost
+    formula's sign (amount * rate goes negative), so an already-illegitimate
+    input silently produces a differently-wrong decision instead of a
+    caller-facing error - same class of guard as probability's ge=0/le=1."""
+    response = client.post(
+        "/decide",
+        json={
+            "probability": 0.5,
+            "merchant_category": "travel",
+            "amount": -100,
+            "is_returning_customer": True,
+            "is_known_device": True,
+        },
+    )
+    assert response.status_code == 422
+
+
 @pytest.mark.integration
 def test_decide_resolves_segment_fields_from_transaction_id():
     """transaction_id supplies segment fields; probability is still

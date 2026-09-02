@@ -147,7 +147,11 @@ def _active_cost_assumptions_standalone() -> tuple[CostAssumptions, str | None]:
     defined fallback behavior)."""
     try:
         conn = db.get_connection()
-    except RuntimeError:
+    except (RuntimeError, psycopg.Error):
+        # RuntimeError: no database URL configured at all.
+        # psycopg.Error: a URL is configured but the connection attempt
+        # itself failed (unreachable, timed out, refused) - the fallback
+        # promised above needs to cover this too, not just "not configured".
         return DEFAULT_COST_ASSUMPTIONS, None
     try:
         with conn:
