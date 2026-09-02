@@ -6,6 +6,7 @@ import random
 
 from fastapi import APIRouter, HTTPException
 
+from . import get_connection_or_503
 from .. import db
 from ..schemas import GenerateSyntheticRequest, TransactionRecord
 from ..transactions import generate_synthetic_transaction, get_transaction, insert_transaction
@@ -15,10 +16,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 @router.post("/synthetic", response_model=list[TransactionRecord])
 async def generate_synthetic(payload: GenerateSyntheticRequest) -> list[TransactionRecord]:
-    try:
-        conn = db.get_connection()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    conn = get_connection_or_503()
 
     with conn:
         db.ensure_schema(conn)
@@ -34,10 +32,7 @@ async def generate_synthetic(payload: GenerateSyntheticRequest) -> list[Transact
 
 @router.get("/{transaction_id}", response_model=TransactionRecord)
 async def read_transaction(transaction_id: str) -> TransactionRecord:
-    try:
-        conn = db.get_connection()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    conn = get_connection_or_503()
 
     with conn:
         row = get_transaction(conn, transaction_id)

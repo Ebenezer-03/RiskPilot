@@ -78,6 +78,44 @@ def test_response_includes_all_required_fields():
     assert body["probability_used"] == 0.5
 
 
+def test_decide_uses_the_active_policys_cost_assumptions(monkeypatch):
+    """Promoting a candidate policy to ACTIVE (ticket 09) must change what
+    /decide itself computes, not just flip a database status - see
+    decisions.py's _active_cost_assumptions_standalone. Monkeypatches the
+    active-policy lookup rather than actually promoting a policy through
+    the registry: this suite runs against a persistent, shared Supabase
+    instance with no way to un-ACTIVATE a policy afterwards (see
+    test_policies_api.py's module docstring), so a real promotion here
+    would permanently change every other test's day-1-default assumption
+    forever - this achieves the same wiring proof without that side effect.
+    """
+    baseline = _decide(
+        probability=0.02,
+        merchant_category="food_delivery",
+        amount=500,
+        is_returning_customer=True,
+        is_known_device=True,
+    )
+    assert baseline["decision"] == "ALLOW"
+
+    from _app.cost_engine import CostAssumptions
+
+    active_assumptions = CostAssumptions(fraud_loss_rate_base=1000.0)
+    monkeypatch.setattr(
+        "_app.routers.decisions._active_cost_assumptions_standalone",
+        lambda: (active_assumptions, "test-active-policy"),
+    )
+
+    body = _decide(
+        probability=0.02,
+        merchant_category="food_delivery",
+        amount=500,
+        is_returning_customer=True,
+        is_known_device=True,
+    )
+    assert body["decision"] == "BLOCK"
+
+
 def test_missing_segment_fields_without_transaction_id_returns_422():
     response = client.post("/decide", json={"probability": 0.5})
     assert response.status_code == 422

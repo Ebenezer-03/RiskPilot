@@ -18,6 +18,8 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Json
 
+from . import db
+
 _COLUMNS = """
     policy_id, name, status, cost_assumptions, review_capacity,
     baseline_policy_id, replay_result, guardrail_violations,
@@ -81,11 +83,6 @@ SELECT {_COLUMNS} FROM policies WHERE status = 'ACTIVE' ORDER BY activated_at DE
 """
 
 
-def _row_to_dict(cur, row) -> dict[str, Any]:
-    columns = [desc.name for desc in cur.description]
-    return dict(zip(columns, row))
-
-
 def insert_policy(conn: psycopg.Connection, *, policy_id: str, name: str, cost_assumptions: dict, review_capacity: int) -> dict[str, Any]:
     with conn.cursor() as cur:
         cur.execute(
@@ -97,7 +94,7 @@ def insert_policy(conn: psycopg.Connection, *, policy_id: str, name: str, cost_a
                 "review_capacity": review_capacity,
             },
         )
-        row = _row_to_dict(cur, cur.fetchone())
+        row = db.row_to_dict(cur, cur.fetchone())
     conn.commit()
     return row
 
@@ -108,7 +105,7 @@ def get_policy(conn: psycopg.Connection, policy_id: str) -> dict[str, Any] | Non
         row = cur.fetchone()
         if row is None:
             return None
-        return _row_to_dict(cur, row)
+        return db.row_to_dict(cur, row)
 
 
 def list_policies(conn: psycopg.Connection, *, status: str | None = None) -> list[dict[str, Any]]:
@@ -118,8 +115,7 @@ def list_policies(conn: psycopg.Connection, *, status: str | None = None) -> lis
     with conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
-        columns = [desc.name for desc in cur.description]
-    return [dict(zip(columns, row)) for row in rows]
+        return db.rows_to_dicts(cur, rows)
 
 
 def get_current_active_policy(conn: psycopg.Connection) -> dict[str, Any] | None:
@@ -128,7 +124,7 @@ def get_current_active_policy(conn: psycopg.Connection) -> dict[str, Any] | None
         row = cur.fetchone()
         if row is None:
             return None
-        return _row_to_dict(cur, row)
+        return db.row_to_dict(cur, row)
 
 
 def update_draft_policy(
@@ -147,7 +143,7 @@ def update_draft_policy(
             },
         )
         row = cur.fetchone()
-        result = _row_to_dict(cur, row) if row is not None else None
+        result = db.row_to_dict(cur, row) if row is not None else None
     conn.commit()
     return result
 
@@ -171,7 +167,7 @@ def transition_to_simulated(
             {"policy_id": policy_id, "baseline_policy_id": baseline_policy_id, "replay_result": Json(replay_result)},
         )
         row = cur.fetchone()
-        result = _row_to_dict(cur, row) if row is not None else None
+        result = db.row_to_dict(cur, row) if row is not None else None
     conn.commit()
     return result
 
@@ -180,7 +176,7 @@ def transition_to_active(conn: psycopg.Connection, policy_id: str) -> dict[str, 
     with conn.cursor() as cur:
         cur.execute(_TRANSITION_TO_ACTIVE_SQL, {"policy_id": policy_id})
         row = cur.fetchone()
-        result = _row_to_dict(cur, row) if row is not None else None
+        result = db.row_to_dict(cur, row) if row is not None else None
     conn.commit()
     return result
 
@@ -193,6 +189,6 @@ def record_guardrail_rejection(
     with conn.cursor() as cur:
         cur.execute(_RECORD_REJECTION_SQL, {"policy_id": policy_id, "guardrail_violations": Json(violations)})
         row = cur.fetchone()
-        result = _row_to_dict(cur, row) if row is not None else None
+        result = db.row_to_dict(cur, row) if row is not None else None
     conn.commit()
     return result

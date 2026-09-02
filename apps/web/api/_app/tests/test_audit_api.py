@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from _app import db
-from _app.cost_engine import COST_MATRIX_VERSION, POLICY_VERSION
+from _app.cost_engine import POLICY_VERSION
 from _app.main import app
 from _app.segments import SEGMENT_DEFINITION_VERSION
 
@@ -76,8 +76,16 @@ def test_decision_trace_round_trips_exactly():
     assert entry["calibration_version"] == "isotonic-v1.0"
     assert entry["feature_schema_version"] == "features-v1.0"
     assert entry["segment_definition_version"] == SEGMENT_DEFINITION_VERSION
+    # policy_version identifies the decision mechanism, which the registry
+    # never varies, so it's always the constant. cost_matrix_version isn't
+    # asserted against the hardcoded day-1 constant here: this suite runs
+    # against a persistent, shared database (see test_policies_api.py's
+    # module docstring), where another test may have already promoted a
+    # policy to ACTIVE - ticket 09's whole point is that /decide then
+    # stamps *that* policy's id here instead (see decisions.py). Populated
+    # either way is what this test can actually guarantee.
     assert entry["policy_version"] == POLICY_VERSION
-    assert entry["cost_matrix_version"] == COST_MATRIX_VERSION
+    assert entry["cost_matrix_version"]
 
 
 def test_decision_without_explicit_model_versions_stores_null():
@@ -96,11 +104,12 @@ def test_decision_without_explicit_model_versions_stores_null():
     assert entry["model_version"] is None
     assert entry["calibration_version"] is None
     assert entry["feature_schema_version"] is None
-    # Policy-level versions are always populated - there's a day-1 default
-    # policy/cost matrix even with no real model behind the probability.
+    # Policy-level versions are always populated, even with no real model
+    # behind the probability (see the equivalent assertion's comment in
+    # test_decision_trace_round_trips_exactly above).
     assert entry["segment_definition_version"] == SEGMENT_DEFINITION_VERSION
     assert entry["policy_version"] == POLICY_VERSION
-    assert entry["cost_matrix_version"] == COST_MATRIX_VERSION
+    assert entry["cost_matrix_version"]
 
 
 def test_repeated_decisions_on_the_same_transaction_are_all_recorded():

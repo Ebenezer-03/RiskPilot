@@ -10,7 +10,8 @@ from dataclasses import asdict
 import psycopg
 from fastapi import APIRouter, HTTPException
 
-from .. import db, policy_registry
+from . import get_connection_or_503 as _get_connection
+from .. import policy_registry
 from ..guardrails import GuardrailThresholds, evaluate_guardrails
 from ..policy import DEFAULT_POLICY
 from ..replay import ReplayComparison, ReplayResult, SegmentReplayMetrics
@@ -44,13 +45,6 @@ def _record_to_schema(row: dict) -> PolicyRecord:
         simulated_at=row["simulated_at"],
         activated_at=row["activated_at"],
     )
-
-
-def _get_connection() -> psycopg.Connection:
-    try:
-        return db.get_connection()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _get_or_404(conn, policy_id: str) -> dict:

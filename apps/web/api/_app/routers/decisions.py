@@ -5,18 +5,25 @@ audit trail (ticket 07) - see ../audit.py.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import psycopg
 from fastapi import APIRouter, HTTPException
 
+from . import get_connection_or_503
 from .. import db
 from ..audit import insert_decision
 from ..cost_engine import (
     COST_MATRIX_VERSION,
+    DEFAULT_COST_ASSUMPTIONS,
     POLICY_VERSION,
+    CostAssumptions,
     build_reason_codes,
     choose_action,
     compute_expected_costs,
     resolve_cost_profile,
 )
+from ..policy_registry import get_current_active_policy
 from ..schemas import DecideRequest, DecideResponse
 from ..segments import SEGMENT_DEFINITION_VERSION, resolve_amount_band
 from ..transactions import get_transaction
@@ -38,16 +45,10 @@ async def decide(payload: DecideRequest) -> DecideResponse:
     fields = {name: getattr(payload, name) for name in _RECORD_FIELD_BY_REQUEST_FIELD}
     data_source = None
 
-    # One connection for the whole request - not one for the transaction
-    # lookup and a second for the audit-trail insert below. Left open (not
-    # entered via `with`) until the single `with conn:` block further down,
-    # which spans both the lookup and the insert.
-    conn = None
     if payload.transaction_id:
-        try:
-            conn = db.get_connection()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        conn = get_connection_or_503()
+        # One connection, one transaction, spanning both the lookup and the
+        # audit-trail insert below - not a separate connection for each.
         with conn:
             record = get_transaction(conn, payload.transaction_id)
             if record is None:
@@ -61,22 +62,8 @@ async def decide(payload: DecideRequest) -> DecideResponse:
             if fields["amount"] is not None:
                 fields["amount"] = float(fields["amount"])
 
-            merchant_id = fields["merchant_id"]
-            merchant_category = fields["merchant_category"]
-            amount = fields["amount"]
-            is_returning_customer = fields["is_returning_customer"]
-            is_known_device = fields["is_known_device"]
-            _require_segment_fields(merchant_category, amount, is_returning_customer, is_known_device)
-
-            amount_band, cost_profile_source, expected_costs, action, reason_codes = _decide_action(
-                payload=payload,
-                merchant_id=merchant_id,
-                merchant_category=merchant_category,
-                amount=amount,
-                is_returning_customer=is_returning_customer,
-                is_known_device=is_known_device,
-            )
-            rounded_costs = {k: round(v, 2) for k, v in expected_costs.items()}
+            cost_assumptions, active_policy_id = _active_cost_assumptions_using(conn)
+            outcome = _resolve_and_decide(payload, fields, cost_assumptions)
 
             insert_decision(
                 conn,
@@ -84,50 +71,120 @@ async def decide(payload: DecideRequest) -> DecideResponse:
                     "transaction_id": payload.transaction_id,
                     "data_source": data_source,
                     "probability_used": payload.probability,
-                    "action": action,
-                    "expected_costs": rounded_costs,
-                    "reason_codes": reason_codes,
-                    "merchant_category": merchant_category,
-                    "amount_band": amount_band,
-                    "is_returning_customer": is_returning_customer,
-                    "is_known_device": is_known_device,
-                    "cost_profile_source": cost_profile_source,
+                    "action": outcome.action,
+                    "expected_costs": outcome.rounded_costs,
+                    "reason_codes": outcome.reason_codes,
+                    "merchant_category": outcome.merchant_category,
+                    "amount_band": outcome.amount_band,
+                    "is_returning_customer": outcome.is_returning_customer,
+                    "is_known_device": outcome.is_known_device,
+                    "cost_profile_source": outcome.cost_profile_source,
                     "model_version": payload.model_version,
                     "calibration_version": payload.calibration_version,
                     "feature_schema_version": payload.feature_schema_version,
                     "segment_definition_version": SEGMENT_DEFINITION_VERSION,
+                    # policy_version identifies the decision *mechanism*
+                    # (which actions exist, the tie-break rule, the
+                    # fallback chain - see cost_engine.py's comment); the
+                    # registry only ever varies cost assumptions, so an
+                    # active policy's id belongs on cost_matrix_version,
+                    # not collapsed into both.
                     "policy_version": POLICY_VERSION,
-                    "cost_matrix_version": COST_MATRIX_VERSION,
+                    "cost_matrix_version": active_policy_id or COST_MATRIX_VERSION,
                 },
             )
     else:
-        merchant_id = fields["merchant_id"]
-        merchant_category = fields["merchant_category"]
-        amount = fields["amount"]
-        is_returning_customer = fields["is_returning_customer"]
-        is_known_device = fields["is_known_device"]
-        _require_segment_fields(merchant_category, amount, is_returning_customer, is_known_device)
-
-        amount_band, cost_profile_source, expected_costs, action, reason_codes = _decide_action(
-            payload=payload,
-            merchant_id=merchant_id,
-            merchant_category=merchant_category,
-            amount=amount,
-            is_returning_customer=is_returning_customer,
-            is_known_device=is_known_device,
-        )
-        rounded_costs = {k: round(v, 2) for k, v in expected_costs.items()}
+        cost_assumptions, _active_policy_id = _active_cost_assumptions_standalone()
+        outcome = _resolve_and_decide(payload, fields, cost_assumptions)
 
     return DecideResponse(
         transaction_id=payload.transaction_id,
-        decision=action,
-        expected_costs=rounded_costs,
+        decision=outcome.action,
+        expected_costs=outcome.rounded_costs,
         probability_used=payload.probability,
+        merchant_category=outcome.merchant_category,
+        amount_band=outcome.amount_band,
+        is_returning_customer=outcome.is_returning_customer,
+        is_known_device=outcome.is_known_device,
+        cost_profile_source=outcome.cost_profile_source,
+        reason_codes=outcome.reason_codes,
+    )
+
+
+@dataclass(frozen=True)
+class _DecisionOutcome:
+    merchant_category: str
+    amount_band: str
+    is_returning_customer: bool
+    is_known_device: bool
+    cost_profile_source: str
+    rounded_costs: dict
+    action: str
+    reason_codes: list
+
+
+def _active_cost_assumptions_using(conn: psycopg.Connection) -> tuple[CostAssumptions, str | None]:
+    """The currently ACTIVE policy's cost assumptions, so promoting a
+    candidate through the registry (ticket 09) actually changes live
+    decisioning rather than only a database status - falls back to the
+    day-1 default when no policy has ever been activated. `conn` is
+    already open (the caller's own transaction_id lookup/audit-insert
+    connection), so this issues one extra query on it rather than a
+    second connection."""
+    active = get_current_active_policy(conn)
+    if active is None:
+        return DEFAULT_COST_ASSUMPTIONS, None
+    return CostAssumptions(**active["cost_assumptions"]), active["policy_id"]
+
+
+def _active_cost_assumptions_standalone() -> tuple[CostAssumptions, str | None]:
+    """Same as `_active_cost_assumptions_using`, but opens (and closes) its
+    own connection - used only when /decide has no transaction_id and so no
+    connection open yet. A policy-registry outage shouldn't take down
+    decisioning entirely, so any failure to reach the database - not
+    configured, or configured but unreachable - falls back to the day-1
+    default rather than raising (see issue #1's reliability story on a
+    defined fallback behavior)."""
+    try:
+        conn = db.get_connection()
+    except RuntimeError:
+        return DEFAULT_COST_ASSUMPTIONS, None
+    try:
+        with conn:
+            return _active_cost_assumptions_using(conn)
+    except psycopg.Error:
+        return DEFAULT_COST_ASSUMPTIONS, None
+
+
+def _resolve_and_decide(payload: DecideRequest, fields: dict, cost_assumptions: CostAssumptions) -> _DecisionOutcome:
+    """The segment-validation + cost-engine pipeline shared by both the
+    transaction_id and explicit-fields paths in `decide`, so persistence
+    (which only applies to the transaction_id path) doesn't force two
+    copies of this logic."""
+    merchant_id = fields["merchant_id"]
+    merchant_category = fields["merchant_category"]
+    amount = fields["amount"]
+    is_returning_customer = fields["is_returning_customer"]
+    is_known_device = fields["is_known_device"]
+    _require_segment_fields(merchant_category, amount, is_returning_customer, is_known_device)
+
+    amount_band, cost_profile_source, expected_costs, action, reason_codes = _decide_action(
+        payload=payload,
+        merchant_id=merchant_id,
+        merchant_category=merchant_category,
+        amount=amount,
+        is_returning_customer=is_returning_customer,
+        is_known_device=is_known_device,
+        cost_assumptions=cost_assumptions,
+    )
+    return _DecisionOutcome(
         merchant_category=merchant_category,
         amount_band=amount_band,
         is_returning_customer=is_returning_customer,
         is_known_device=is_known_device,
         cost_profile_source=cost_profile_source,
+        rounded_costs={k: round(v, 2) for k, v in expected_costs.items()},
+        action=action,
         reason_codes=reason_codes,
     )
 
@@ -158,6 +215,7 @@ def _decide_action(
     amount: float,
     is_returning_customer: bool,
     is_known_device: bool,
+    cost_assumptions: CostAssumptions,
 ):
     """The pure cost-engine pipeline, shared by both the transaction_id and
     explicit-fields paths in `decide` so persistence (which only applies to
@@ -169,6 +227,7 @@ def _decide_action(
         amount_band=amount_band,
         is_returning_customer=is_returning_customer,
         is_known_device=is_known_device,
+        assumptions=cost_assumptions,
     )
 
     expected_costs = compute_expected_costs(payload.probability, amount, cost_profile)

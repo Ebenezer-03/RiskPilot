@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .. import db
+from . import get_connection_or_503
 from ..schemas import ReplayRequest, ReplayResponse
 from ..simulation_support import fetch_replay_window, policy_from_request, replay_result_to_response, run_replay
 
@@ -19,10 +19,7 @@ router = APIRouter(tags=["simulation"])
 
 @router.post("/simulation/replay", response_model=ReplayResponse)
 async def replay(payload: ReplayRequest) -> ReplayResponse:
-    try:
-        conn = db.get_connection()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    conn = get_connection_or_503()
 
     with conn:
         transactions, skipped = fetch_replay_window(conn, payload.window)

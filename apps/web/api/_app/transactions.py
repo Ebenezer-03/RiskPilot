@@ -19,6 +19,7 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Json
 
+from . import db
 from .segments import MERCHANT_CATEGORIES, resolve_amount_band
 
 # Illustrative per-category amount distributions (INR), log-normal so most
@@ -176,8 +177,7 @@ def get_transaction(conn: psycopg.Connection, transaction_id: str) -> dict[str, 
         row = cur.fetchone()
         if row is None:
             return None
-        columns = [desc.name for desc in cur.description]
-    return dict(zip(columns, row))
+        return db.row_to_dict(cur, row)
 
 
 _SELECT_LABELED_SQL_TEMPLATE = """
@@ -208,5 +208,4 @@ def get_labeled_transactions(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
-        columns = [desc.name for desc in cur.description]
-    return [dict(zip(columns, row)) for row in rows]
+        return db.rows_to_dicts(cur, rows)

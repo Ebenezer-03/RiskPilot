@@ -18,6 +18,8 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Json
 
+from . import db
+
 _INSERT_SQL = """
 INSERT INTO decisions (
     transaction_id, data_source, probability_used, action, expected_costs,
@@ -69,5 +71,4 @@ def get_decisions_for_transaction(conn: psycopg.Connection, transaction_id: str)
     with conn.cursor() as cur:
         cur.execute(_SELECT_BY_TRANSACTION_SQL, {"transaction_id": transaction_id})
         rows = cur.fetchall()
-        columns = [desc.name for desc in cur.description]
-    return [dict(zip(columns, row)) for row in rows]
+        return db.rows_to_dicts(cur, rows)

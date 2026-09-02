@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .. import db
+from . import get_connection_or_503
 from ..audit import get_decisions_for_transaction
 from ..schemas import AuditTraceResponse, DecisionRecord, TransactionRecord
 from ..transactions import get_transaction
@@ -15,10 +15,7 @@ router = APIRouter(tags=["audit"])
 
 @router.get("/audit/{transaction_id}", response_model=AuditTraceResponse)
 async def get_audit_trace(transaction_id: str) -> AuditTraceResponse:
-    try:
-        conn = db.get_connection()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    conn = get_connection_or_503()
 
     with conn:
         transaction = get_transaction(conn, transaction_id)

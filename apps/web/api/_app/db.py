@@ -31,6 +31,20 @@ def get_connection() -> psycopg.Connection:
     return psycopg.connect(url, connect_timeout=5)
 
 
+def row_to_dict(cur: psycopg.Cursor, row: tuple) -> dict:
+    """Zips one fetched row with its cursor's column names. Every module
+    that hand-writes SELECT/RETURNING SQL (transactions.py, audit.py,
+    policy_registry.py) goes through this rather than each re-deriving
+    `columns` locally."""
+    columns = [desc.name for desc in cur.description]
+    return dict(zip(columns, row))
+
+
+def rows_to_dicts(cur: psycopg.Cursor, rows: list[tuple]) -> list[dict]:
+    columns = [desc.name for desc in cur.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS transactions (
     id BIGSERIAL PRIMARY KEY,
