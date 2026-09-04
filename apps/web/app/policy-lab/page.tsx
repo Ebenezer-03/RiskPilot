@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { NavHeader } from "@/app/components/nav-header";
-import { Field, Panel, buttonClass, formatCurrency, inputClass } from "@/app/components/ui";
+import { Field, Panel, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
 import {
   ApiError,
   DEFAULT_COST_ASSUMPTIONS,
@@ -204,7 +204,7 @@ export default function PolicyLab() {
   const policyIdLocked = !!policy && policy.status === "DRAFT";
 
   return (
-    <div className="min-h-screen bg-black font-sans text-zinc-100">
+    <div className="min-h-screen bg-obsidian font-sans text-zinc-100">
       <NavHeader endpoints="/policies · /simulation/replay" />
 
       <main className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
@@ -278,7 +278,7 @@ export default function PolicyLab() {
               candidate.
             </p>
           )}
-          <button onClick={handleSave} disabled={saveLoading || !canEdit} className={`${buttonClass} self-start`}>
+          <button onClick={handleSave} disabled={saveLoading || !canEdit} className={`${primaryButtonClass} self-start`}>
             {saveLoading ? "Saving…" : policy ? "Update candidate policy" : "Save as candidate policy"}
           </button>
           {saveError && <p className="text-xs text-rose-400">{saveError}</p>}
@@ -330,7 +330,7 @@ export default function PolicyLab() {
               />
             </Field>
           </div>
-          <button onClick={handleSimulate} disabled={simulateLoading || !canSimulate} className={`${buttonClass} self-start`}>
+          <button onClick={handleSimulate} disabled={simulateLoading || !canSimulate} className={`${primaryButtonClass} self-start`}>
             {simulateLoading ? "Replaying…" : "Run replay"}
           </button>
           {!canSimulate && policy && policy.status !== "DRAFT" && (
@@ -429,7 +429,7 @@ export default function PolicyLab() {
         </Panel>
 
         <Panel title="Promotion · POST /policies/{id}/promote">
-          <button onClick={handlePromote} disabled={promoteLoading || !canPromote} className={`${buttonClass} self-start`}>
+          <button onClick={handlePromote} disabled={promoteLoading || !canPromote} className={`${primaryButtonClass} self-start`}>
             {promoteLoading ? "Checking guardrails…" : "Promote to ACTIVE"}
           </button>
           {!canPromote && (

@@ -312,3 +312,53 @@ export function promotePolicy(
     body: JSON.stringify({ thresholds }),
   });
 }
+
+// --- Audit & Monitoring (ticket 12) -----------------------------------------------
+
+export interface DecisionRecord {
+  id: number;
+  transaction_id: string;
+  decided_at: string;
+  data_source: DataSource;
+  probability_used: number;
+  action: Action;
+  expected_costs: Record<Action, number>;
+  reason_codes: string[];
+  merchant_category: MerchantCategory;
+  amount_band: AmountBand;
+  is_returning_customer: boolean;
+  is_known_device: boolean;
+  cost_profile_source: CostProfileSource;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_schema_version: string | null;
+  segment_definition_version: string;
+  policy_version: string;
+  cost_matrix_version: string;
+}
+
+export interface AuditTraceResponse {
+  transaction: TransactionRecord;
+  decisions: DecisionRecord[];
+}
+
+export function getAuditTrace(transactionId: string): Promise<AuditTraceResponse> {
+  return request(`/audit/${encodeURIComponent(transactionId)}`);
+}
+
+export interface TrendPoint {
+  day: string;
+  total_decisions: number;
+  approval_rate: number;
+  false_positive_rate: number | null;
+  fraud_loss: number;
+}
+
+export interface AuditTrendsResponse {
+  window_days: number;
+  points: TrendPoint[];
+}
+
+export function getAuditTrends(days = 30): Promise<AuditTrendsResponse> {
+  return request(`/audit/trends/daily?days=${days}`);
+}

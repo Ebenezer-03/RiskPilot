@@ -1,26 +1,44 @@
 @import "tailwindcss";
 
+/* RiskPilot is dark-only by design (see docs/agents grill session on UI
+ * design) - the whole product is a single fintech ops console, not a
+ * light/dark-adaptive marketing site, so there is no light-mode branch
+ * here. Palette adapted from the "Sauce Labs" reference doc: obsidian
+ * canvas + a single rationed neon-green accent for the landing page's
+ * marketing chrome, carried through as the dashboard's primary-action
+ * color so the whole product shares one accent language. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #132322;
+  --foreground: #ffffff;
+
+  --color-obsidian: #132322;
+  --color-obsidian-deep: #0e1a19;
+  --color-charcoal: #070f0f;
+  --color-mint-frost: #edf7f5;
+  --color-mint-whisper: #97ddbc;
+  --color-signal-yellow: #ffcd48;
+  --color-neon: #3ddc91;
+  --color-fog-border: #d0d3d3;
+  --color-slate-text: #828786;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-obsidian: var(--color-obsidian);
+  --color-obsidian-deep: var(--color-obsidian-deep);
+  --color-charcoal: var(--color-charcoal);
+  --color-mint-frost: var(--color-mint-frost);
+  --color-mint-whisper: var(--color-mint-whisper);
+  --color-signal-yellow: var(--color-signal-yellow);
+  --color-neon: var(--color-neon);
+  --color-fog-border: var(--color-fog-border);
+  --color-slate-text: var(--color-slate-text);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
