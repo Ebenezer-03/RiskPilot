@@ -59,16 +59,47 @@ export interface DecideResponse {
   reason_codes: string[];
 }
 
+/** FastAPI/Pydantic's validation-error shape for a 422 response: a list of
+ * per-field problems, each naming the offending field's location and a
+ * human-written message. */
+interface ValidationErrorItem {
+  loc?: unknown[];
+  msg?: unknown;
+}
+
+function isValidationErrorItem(value: unknown): value is ValidationErrorItem {
+  return typeof value === "object" && value !== null && "msg" in value;
+}
+
+/** Turns a FastAPI error `detail` into one line a user (not a developer)
+ * can read - a plain string passes through, a 422 validation-error array
+ * becomes "field: message" per problem, and anything else still falls back
+ * to raw JSON rather than silently swallowing information. */
+function formatErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail.filter(isValidationErrorItem).map((item) => {
+      const field = Array.isArray(item.loc)
+        ? item.loc.filter((part) => part !== "body").join(".")
+        : undefined;
+      const msg = String(item.msg);
+      return field ? `${field}: ${msg}` : msg;
+    });
+    if (messages.length > 0) {
+      return messages.join("; ");
+    }
+  }
+  return JSON.stringify(detail);
+}
+
 export class ApiError extends Error {
   status: number;
   detail: unknown;
 
   constructor(status: number, detail: unknown) {
-    super(
-      `API request failed (${status}): ${
-        typeof detail === "string" ? detail : JSON.stringify(detail)
-      }`,
-    );
+    super(`API request failed (${status}): ${formatErrorDetail(detail)}`);
     this.status = status;
     this.detail = detail;
   }
