@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { History, SearchX } from "lucide-react";
 import { NavHeader } from "@/app/components/nav-header";
 import { Field, Panel, STATUS_COLORS, Sparkline, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
 import {
@@ -11,6 +12,24 @@ import {
   type AuditTraceResponse,
   type AuditTrendsResponse,
 } from "@/lib/api";
+
+const RECENT_LOOKUPS_KEY = "riskpilot.audit.recent_lookups";
+const MAX_RECENT_LOOKUPS = 8;
+
+function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function loadRecentLookups(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_LOOKUPS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    // Private browsing, cleared site data, etc. - a missing history list
+    // isn't worth surfacing as an error, it just means the list is empty.
+    return [];
+  }
+}
 
 export default function AuditMonitoring() {
   // --- Trends ---
@@ -28,14 +47,34 @@ export default function AuditMonitoring() {
   const [trace, setTrace] = useState<AuditTraceResponse | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceError, setTraceError] = useState<string | null>(null);
+  // Lazy initializer, not an effect: this is per-viewer browser state, not
+  // a value synchronized from React into an external system, so reading it
+  // once at mount time is the right shape here. Guarded for SSR, where
+  // `window` doesn't exist yet - the client render then reads it for real.
+  const [recentLookups, setRecentLookups] = useState<string[]>(() =>
+    typeof window === "undefined" ? [] : loadRecentLookups(),
+  );
 
-  async function handleLookup() {
-    if (!transactionId.trim()) return;
+  async function handleLookup(id?: string) {
+    const targetId = (id ?? transactionId).trim();
+    if (!targetId) return;
+    setTransactionId(targetId);
     setTraceLoading(true);
     setTraceError(null);
     setTrace(null);
     try {
-      setTrace(await getAuditTrace(transactionId.trim()));
+      setTrace(await getAuditTrace(targetId));
+      const updated = [targetId, ...recentLookups.filter((existing) => existing !== targetId)].slice(
+        0,
+        MAX_RECENT_LOOKUPS,
+      );
+      setRecentLookups(updated);
+      try {
+        window.localStorage.setItem(RECENT_LOOKUPS_KEY, JSON.stringify(updated));
+      } catch {
+        // Per-viewer convenience only - a failed write just means this
+        // lookup won't be remembered next visit.
+      }
     } catch (err) {
       setTraceError(err instanceof ApiError ? err.message : "Failed to look up that transaction.");
     } finally {
@@ -44,10 +83,12 @@ export default function AuditMonitoring() {
   }
 
   const points = trends?.points ?? [];
+  const dayLabels = points.map((p) => formatDay(p.day));
   const approvalRates = points.map((p) => p.approval_rate);
   const fraudLosses = points.map((p) => p.fraud_loss);
   const fpPoints = points.filter((p) => p.false_positive_rate !== null);
   const falsePositiveRates = fpPoints.map((p) => p.false_positive_rate as number);
+  const falsePositiveDays = fpPoints.map((p) => formatDay(p.day));
   const totalDecisions = points.reduce((sum, p) => sum + p.total_decisions, 0);
 
   return (
@@ -69,20 +110,20 @@ export default function AuditMonitoring() {
                 <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
                   Approval rate · {(approvalRates[approvalRates.length - 1] * 100).toFixed(1)}%
                 </span>
-                <Sparkline values={approvalRates} colorClassName="text-neon" />
+                <Sparkline values={approvalRates} dates={dayLabels} colorClassName="text-neon" />
               </div>
               <div className="flex flex-col gap-2">
                 <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
                   False-decline rate (labeled txns only)
                   {falsePositiveRates.length > 0 && ` · ${(falsePositiveRates[falsePositiveRates.length - 1] * 100).toFixed(1)}%`}
                 </span>
-                <Sparkline values={falsePositiveRates} colorClassName="text-amber-400" />
+                <Sparkline values={falsePositiveRates} dates={falsePositiveDays} colorClassName="text-amber-400" />
               </div>
               <div className="flex flex-col gap-2">
                 <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
                   Realized fraud loss (allowed + confirmed fraud)
                 </span>
-                <Sparkline values={fraudLosses} colorClassName="text-rose-400" />
+                <Sparkline values={fraudLosses} dates={dayLabels} colorClassName="text-rose-400" />
               </div>
             </div>
           )}
@@ -105,12 +146,42 @@ export default function AuditMonitoring() {
                 placeholder="txn_..."
                 className={`${inputClass} flex-1`}
               />
-              <button onClick={handleLookup} disabled={traceLoading || !transactionId.trim()} className={primaryButtonClass}>
+              <button
+                onClick={() => handleLookup()}
+                disabled={traceLoading || !transactionId.trim()}
+                className={primaryButtonClass}
+              >
                 {traceLoading ? "Looking up…" : "Look up"}
               </button>
             </div>
           </Field>
           {traceError && <p className="text-xs text-rose-400">{traceError}</p>}
+
+          {recentLookups.length > 0 && !trace && (
+            <div className="flex flex-col gap-2 border-t border-zinc-800 pt-3">
+              <span className="flex items-center gap-1.5 text-[11px] tracking-wide text-zinc-500 uppercase">
+                <History size={12} /> Recent lookups
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {recentLookups.map((id) => (
+                  <button
+                    key={id}
+                    onClick={() => handleLookup(id)}
+                    className="border border-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-400 hover:border-neon hover:text-neon"
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!trace && !traceLoading && !traceError && recentLookups.length === 0 && (
+            <div className="flex flex-col items-center gap-2 border-t border-zinc-800 py-8 text-zinc-600">
+              <SearchX size={20} />
+              <p className="text-xs">No transaction looked up yet - paste an id above.</p>
+            </div>
+          )}
 
           {trace && (
             <div className="flex flex-col gap-4 border-t border-zinc-800 pt-3">

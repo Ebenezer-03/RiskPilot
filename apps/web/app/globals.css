@@ -13,6 +13,10 @@
 
   --color-obsidian: #132322;
   --color-obsidian-deep: #0e1a19;
+  /* Raised-panel surface - deliberately lighter than the canvas (not
+   * darker, like obsidian-deep) so a Panel actually reads as sitting on
+   * top of the page instead of blending into it. */
+  --color-panel: #17302d;
   --color-charcoal: #070f0f;
   --color-mint-frost: #edf7f5;
   --color-mint-whisper: #97ddbc;
@@ -27,6 +31,7 @@
   --color-foreground: var(--foreground);
   --color-obsidian: var(--color-obsidian);
   --color-obsidian-deep: var(--color-obsidian-deep);
+  --color-panel: var(--color-panel);
   --color-charcoal: var(--color-charcoal);
   --color-mint-frost: var(--color-mint-frost);
   --color-mint-whisper: var(--color-mint-whisper);

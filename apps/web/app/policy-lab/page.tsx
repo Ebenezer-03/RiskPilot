@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { NavHeader } from "@/app/components/nav-header";
-import { Field, Panel, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
+import { Field, Panel, StepHint, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
 import {
   ApiError,
   DEFAULT_COST_ASSUMPTIONS,
@@ -208,7 +208,7 @@ export default function PolicyLab() {
       <NavHeader endpoints="/policies · /simulation/replay" />
 
       <main className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
-        <Panel title="Candidate policy · cost profile, amount-band adjustments & review capacity">
+        <Panel title="Candidate policy · cost profile, amount-band adjustments & review capacity" step={1}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Policy ID">
               <input
@@ -289,7 +289,8 @@ export default function PolicyLab() {
           )}
         </Panel>
 
-        <Panel title="Replay · POST /policies/{id}/simulate">
+        <Panel title="Replay · POST /policies/{id}/simulate" step={2} active={!!policy}>
+          {!policy && <StepHint>Save a candidate policy first (step 1).</StepHint>}
           {policiesError && <p className="text-xs text-rose-400">{policiesError}</p>}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Baseline policy">
@@ -428,17 +429,15 @@ export default function PolicyLab() {
           )}
         </Panel>
 
-        <Panel title="Promotion · POST /policies/{id}/promote">
+        <Panel title="Promotion · POST /policies/{id}/promote" step={3} active={canPromote || promotion !== null}>
+          {!canPromote && !promotion && (
+            <StepHint>
+              {policy?.status === "ACTIVE" ? "Already active." : "Run a replay first (step 2)."}
+            </StepHint>
+          )}
           <button onClick={handlePromote} disabled={promoteLoading || !canPromote} className={`${primaryButtonClass} self-start`}>
             {promoteLoading ? "Checking guardrails…" : "Promote to ACTIVE"}
           </button>
-          {!canPromote && (
-            <p className="text-[11px] text-zinc-600">
-              {policy?.status === "ACTIVE"
-                ? "Already active."
-                : "Run a replay first - promotion is only available once a policy is SIMULATED."}
-            </p>
-          )}
           {promoteError && <p className="text-xs text-rose-400">{promoteError}</p>}
 
           {promotion && promotion.approved && (

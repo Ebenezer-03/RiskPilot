@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 import { NavHeader } from "@/app/components/nav-header";
-import { Field, Panel, STATUS_COLORS, buttonClass, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
+import {
+  Field,
+  Panel,
+  STATUS_COLORS,
+  StepHint,
+  buttonClass,
+  formatCurrency,
+  inputClass,
+  primaryButtonClass,
+} from "@/app/components/ui";
 import {
   ApiError,
   decide,
@@ -25,7 +34,9 @@ const MERCHANT_CATEGORIES: MerchantCategory[] = [
 // The IEEE-CIS dataset's actual categorical domains for these columns (see
 // apps/web/api/_app/ml/features.py) - a representative subset exposed here,
 // not the full ~440-column schema, so /score stays a real model call
-// without demanding a spreadsheet-sized form.
+// without demanding a spreadsheet-sized form. Kept behind the "Advanced"
+// disclosure below: these are raw ML dataset field names, not anything a
+// merchant using this console would recognize.
 const PRODUCT_CODES = ["W", "C", "R", "H", "S"];
 const CARD_NETWORKS = ["visa", "mastercard", "american express", "discover"];
 const CARD_TYPES = ["debit", "credit"];
@@ -130,252 +141,273 @@ export default function LiveDecisionConsole() {
     }
   }
 
-  const canDecide =
-    probability !== "" &&
-    !Number.isNaN(Number(probability)) &&
-    (mode === "synthetic" ? synthetic !== null : amount !== "" && !Number.isNaN(Number(amount)));
+  // Step 2 unlocks once there's a transaction to decide on - independent
+  // of whether the probability field is currently a *valid* number
+  // (canDecide, below), so the panel dims/undims on the same condition a
+  // first-time user would describe as "I have a transaction now."
+  const hasTransaction =
+    mode === "synthetic" ? synthetic !== null : amount !== "" && !Number.isNaN(Number(amount));
+  const canDecide = hasTransaction && probability !== "" && !Number.isNaN(Number(probability));
 
   return (
     <div className="min-h-screen bg-obsidian font-sans text-zinc-100">
       <NavHeader endpoints="/decide · /score" />
 
-      <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-6 lg:grid-cols-2">
-        {/* --- Transaction --- */}
-        <Panel title="Transaction">
-          <div className="flex gap-1 self-start border border-zinc-800">
-            {(["synthetic", "manual"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`px-3 py-1 text-xs tracking-wide uppercase ${
-                  mode === m ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
-                }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-
-          {mode === "synthetic" ? (
-            <div className="flex flex-col gap-3">
-              <button onClick={handleGenerateSynthetic} disabled={syntheticLoading} className={primaryButtonClass}>
-                {syntheticLoading ? "Generating…" : "Generate synthetic transaction"}
-              </button>
-              {syntheticError && <p className="text-xs text-rose-400">{syntheticError}</p>}
-              {synthetic && (
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-zinc-800 pt-3 font-mono text-xs">
-                  <dt className="text-zinc-500">id</dt>
-                  <dd className="truncate text-zinc-200">{synthetic.transaction_id}</dd>
-                  <dt className="text-zinc-500">merchant_category</dt>
-                  <dd className="text-zinc-200">{synthetic.merchant_category}</dd>
-                  <dt className="text-zinc-500">amount</dt>
-                  <dd className="text-zinc-200">{formatCurrency(synthetic.amount)}</dd>
-                  <dt className="text-zinc-500">amount_band</dt>
-                  <dd className="text-zinc-200">{synthetic.amount_band}</dd>
-                  <dt className="text-zinc-500">returning_customer</dt>
-                  <dd className="text-zinc-200">{String(synthetic.is_returning_customer)}</dd>
-                  <dt className="text-zinc-500">known_device</dt>
-                  <dd className="text-zinc-200">{String(synthetic.is_known_device)}</dd>
-                  <dt className="text-zinc-500">ground truth (demo only)</dt>
-                  <dd className={synthetic.is_fraud ? "text-rose-400" : "text-emerald-400"}>
-                    {synthetic.is_fraud ? "fraud" : "legitimate"}
-                  </dd>
-                </dl>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Merchant category">
-                <select
-                  value={merchantCategory}
-                  onChange={(e) => setMerchantCategory(e.target.value as MerchantCategory)}
-                  className={inputClass}
+      <main className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* --- Step 1: Transaction --- */}
+          <Panel title="Transaction" step={1}>
+            <div className="flex gap-1 self-start border border-zinc-800">
+              {(["synthetic", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`px-3 py-1 text-xs tracking-wide uppercase ${
+                    mode === m ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+                  }`}
                 >
-                  {MERCHANT_CATEGORIES.map((c) => (
+                  {m}
+                </button>
+              ))}
+            </div>
+
+            {mode === "synthetic" ? (
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={handleGenerateSynthetic}
+                  disabled={syntheticLoading}
+                  className={`${primaryButtonClass} self-start`}
+                >
+                  {syntheticLoading ? "Generating…" : "Generate synthetic transaction"}
+                </button>
+                {syntheticError && <p className="text-xs text-rose-400">{syntheticError}</p>}
+                {synthetic && (
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-zinc-800 pt-3 font-mono text-xs">
+                    <dt className="text-zinc-500">id</dt>
+                    <dd className="truncate text-zinc-200">{synthetic.transaction_id}</dd>
+                    <dt className="text-zinc-500">merchant_category</dt>
+                    <dd className="text-zinc-200">{synthetic.merchant_category}</dd>
+                    <dt className="text-zinc-500">amount</dt>
+                    <dd className="text-zinc-200">{formatCurrency(synthetic.amount)}</dd>
+                    <dt className="text-zinc-500">amount_band</dt>
+                    <dd className="text-zinc-200">{synthetic.amount_band}</dd>
+                    <dt className="text-zinc-500">returning_customer</dt>
+                    <dd className="text-zinc-200">{String(synthetic.is_returning_customer)}</dd>
+                    <dt className="text-zinc-500">known_device</dt>
+                    <dd className="text-zinc-200">{String(synthetic.is_known_device)}</dd>
+                    <dt className="text-zinc-500">ground truth (demo only)</dt>
+                    <dd className={synthetic.is_fraud ? "text-rose-400" : "text-emerald-400"}>
+                      {synthetic.is_fraud ? "fraud" : "legitimate"}
+                    </dd>
+                  </dl>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Merchant category">
+                  <select
+                    value={merchantCategory}
+                    onChange={(e) => setMerchantCategory(e.target.value as MerchantCategory)}
+                    className={inputClass}
+                  >
+                    {MERCHANT_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Amount (INR)">
+                  <input
+                    type="number"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+                <label className="flex items-center gap-2 text-xs text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={isReturningCustomer}
+                    onChange={(e) => setIsReturningCustomer(e.target.checked)}
+                  />
+                  Returning customer
+                </label>
+                <label className="flex items-center gap-2 text-xs text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={isKnownDevice}
+                    onChange={(e) => setIsKnownDevice(e.target.checked)}
+                  />
+                  Known device
+                </label>
+              </div>
+            )}
+          </Panel>
+
+          {/* --- Step 2: Decision --- */}
+          <Panel title="Decision · POST /decide" step={2} active={hasTransaction}>
+            {!hasTransaction && <StepHint>Generate or fill in a transaction first (step 1).</StepHint>}
+            <Field
+              label="Fraud probability to decide on"
+              hint="How likely this transaction is fraud (0 = certainly legitimate, 1 = certainly fraud) - fill it from the detector under Advanced below, or type your own."
+            >
+              <input
+                type="number"
+                step="0.0001"
+                min={0}
+                max={1}
+                value={probability}
+                onChange={(e) => setProbability(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <button
+              onClick={handleDecide}
+              disabled={decideLoading || !canDecide}
+              className={`${primaryButtonClass} self-start`}
+            >
+              {decideLoading ? "Deciding…" : "Run decision engine"}
+            </button>
+            {decideError && <p className="text-xs text-rose-400">{decideError}</p>}
+
+            {decideResult && (
+              <div className="flex flex-col gap-3 border-t border-zinc-800 pt-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`border px-3 py-1 font-mono text-sm font-semibold tracking-wide ${STATUS_COLORS[decideResult.decision]}`}
+                  >
+                    {decideResult.decision}
+                  </span>
+                  <span className="font-mono text-xs text-zinc-500">
+                    {decideResult.merchant_category}/{decideResult.amount_band}/
+                    {decideResult.is_returning_customer ? "returning" : "new"}_customer/
+                    {decideResult.is_known_device ? "known" : "new"}_device
+                  </span>
+                </div>
+
+                <table className="w-full font-mono text-xs">
+                  <tbody>
+                    {(Object.keys(decideResult.expected_costs) as Action[]).map((action) => (
+                      <tr key={action} className="border-t border-zinc-900">
+                        <td
+                          className={`py-1 pr-2 ${action === decideResult.decision ? "text-zinc-100" : "text-zinc-500"}`}
+                        >
+                          {action}
+                          {action === decideResult.decision && " ←"}
+                        </td>
+                        <td className="py-1 text-right text-zinc-200 tabular-nums">
+                          {formatCurrency(decideResult.expected_costs[action])}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="text-xs text-zinc-500">
+                  cost profile source: <span className="text-zinc-300">{decideResult.cost_profile_source}</span>
+                </div>
+
+                <ul className="flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
+                  {decideResult.reason_codes.map((code, i) => (
+                    <li key={i}>· {code}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Panel>
+        </div>
+
+        {/* --- Advanced: real detector, hidden by default (raw ML dataset
+             fields aren't merchant-facing - this exists to prove the
+             detector works, not for daily use) --- */}
+        <details className="border border-zinc-800 border-t-zinc-700 bg-panel open:pb-4">
+          <summary className="cursor-pointer px-4 py-3 text-[11px] font-medium tracking-[0.14em] text-zinc-500 uppercase hover:text-zinc-300">
+            Advanced: score against the real detector · POST /score
+          </summary>
+          <div className="flex flex-col gap-4 px-4">
+            <p className="text-xs text-zinc-500">
+              Scores a representative subset of the IEEE-CIS feature schema through the real
+              calibrated LightGBM detector. Not used for a synthetic transaction&apos;s own decision
+              (synthetic data has no ML-compatible features) - available for any transaction to
+              demonstrate the detector independently, and its output feeds step 2&apos;s probability.
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <Field label="TransactionAmt">
+                <input readOnly value={activeAmount} className={`${inputClass} opacity-60`} />
+              </Field>
+              <Field label="ProductCD">
+                <select value={productCD} onChange={(e) => setProductCD(e.target.value)} className={inputClass}>
+                  {PRODUCT_CODES.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label="Amount (INR)">
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className={inputClass}
-                />
-              </Field>
-              <label className="flex items-center gap-2 text-xs text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={isReturningCustomer}
-                  onChange={(e) => setIsReturningCustomer(e.target.checked)}
-                />
-                Returning customer
-              </label>
-              <label className="flex items-center gap-2 text-xs text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={isKnownDevice}
-                  onChange={(e) => setIsKnownDevice(e.target.checked)}
-                />
-                Known device
-              </label>
-            </div>
-          )}
-        </Panel>
-
-        {/* --- Decision --- */}
-        <Panel title="Decision · POST /decide">
-          <Field
-            label="Fraud probability to decide on"
-            hint="How likely this transaction is fraud (0 = certainly legitimate, 1 = certainly fraud) - fill it from the detector below, or type your own."
-          >
-            <input
-              type="number"
-              step="0.0001"
-              min={0}
-              max={1}
-              value={probability}
-              onChange={(e) => setProbability(e.target.value)}
-              className={inputClass}
-            />
-          </Field>
-          <button onClick={handleDecide} disabled={decideLoading || !canDecide} className={primaryButtonClass}>
-            {decideLoading ? "Deciding…" : "Run decision engine"}
-          </button>
-          {decideError && <p className="text-xs text-rose-400">{decideError}</p>}
-
-          {decideResult && (
-            <div className="flex flex-col gap-3 border-t border-zinc-800 pt-3">
-              <div className="flex items-center gap-3">
-                <span
-                  className={`border px-3 py-1 font-mono text-sm font-semibold tracking-wide ${STATUS_COLORS[decideResult.decision]}`}
-                >
-                  {decideResult.decision}
-                </span>
-                <span className="font-mono text-xs text-zinc-500">
-                  {decideResult.merchant_category}/{decideResult.amount_band}/
-                  {decideResult.is_returning_customer ? "returning" : "new"}_customer/
-                  {decideResult.is_known_device ? "known" : "new"}_device
-                </span>
-              </div>
-
-              <table className="w-full font-mono text-xs">
-                <tbody>
-                  {(Object.keys(decideResult.expected_costs) as Action[]).map((action) => (
-                    <tr key={action} className="border-t border-zinc-900">
-                      <td
-                        className={`py-1 pr-2 ${action === decideResult.decision ? "text-zinc-100" : "text-zinc-500"}`}
-                      >
-                        {action}
-                        {action === decideResult.decision && " ←"}
-                      </td>
-                      <td className="py-1 text-right text-zinc-200 tabular-nums">
-                        {formatCurrency(decideResult.expected_costs[action])}
-                      </td>
-                    </tr>
+              <Field label="card4">
+                <select value={card4} onChange={(e) => setCard4(e.target.value)} className={inputClass}>
+                  {CARD_NETWORKS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+              </Field>
+              <Field label="card6">
+                <select value={card6} onChange={(e) => setCard6(e.target.value)} className={inputClass}>
+                  {CARD_TYPES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="DeviceType">
+                <select value={deviceType} onChange={(e) => setDeviceType(e.target.value)} className={inputClass}>
+                  {DEVICE_TYPES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <Field label="P_emaildomain">
+              <input
+                value={emailDomain}
+                onChange={(e) => setEmailDomain(e.target.value)}
+                className={`${inputClass} w-48`}
+              />
+            </Field>
+            <button onClick={handleScore} disabled={scoreLoading} className={`${buttonClass} self-start`}>
+              {scoreLoading ? "Scoring…" : "Run detector"}
+            </button>
+            {scoreError && <p className="text-xs text-rose-400">{scoreError}</p>}
 
-              <div className="text-xs text-zinc-500">
-                cost profile source: <span className="text-zinc-300">{decideResult.cost_profile_source}</span>
+            {scoreResult && (
+              <div className="grid grid-cols-1 gap-4 border-t border-zinc-800 pt-3 sm:grid-cols-2">
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-xs">
+                  <dt className="text-zinc-500">raw probability</dt>
+                  <dd className="text-zinc-200">{scoreResult.fraud_probability_raw}</dd>
+                  <dt className="text-zinc-500">calibrated probability</dt>
+                  <dd className="text-zinc-100">{scoreResult.fraud_probability_calibrated}</dd>
+                  <dt className="text-zinc-500">model_version</dt>
+                  <dd className="text-zinc-200">{scoreResult.model_version}</dd>
+                  <dt className="text-zinc-500">calibration_version</dt>
+                  <dd className="text-zinc-200">{scoreResult.calibration_version}</dd>
+                </dl>
+                <ul className="flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
+                  {scoreResult.reason_codes.length === 0 ? (
+                    <li>· no material contributing features</li>
+                  ) : (
+                    scoreResult.reason_codes.map((code, i) => <li key={i}>· {code}</li>)
+                  )}
+                </ul>
               </div>
-
-              <ul className="flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
-                {decideResult.reason_codes.map((code, i) => (
-                  <li key={i}>· {code}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </Panel>
-
-        {/* --- Score (optional real detector call) --- */}
-        <Panel title="Model score (optional) · POST /score" className="lg:col-span-2">
-          <p className="text-xs text-zinc-500">
-            Scores a representative subset of the IEEE-CIS feature schema through the real
-            calibrated LightGBM detector. Not used for a synthetic transaction&apos;s own decision
-            (synthetic data has no ML-compatible features) - available for any transaction to
-            demonstrate the detector independently, and its output feeds the probability above.
-          </p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <Field label="TransactionAmt">
-              <input readOnly value={activeAmount} className={`${inputClass} opacity-60`} />
-            </Field>
-            <Field label="ProductCD">
-              <select value={productCD} onChange={(e) => setProductCD(e.target.value)} className={inputClass}>
-                {PRODUCT_CODES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="card4">
-              <select value={card4} onChange={(e) => setCard4(e.target.value)} className={inputClass}>
-                {CARD_NETWORKS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="card6">
-              <select value={card6} onChange={(e) => setCard6(e.target.value)} className={inputClass}>
-                {CARD_TYPES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="DeviceType">
-              <select value={deviceType} onChange={(e) => setDeviceType(e.target.value)} className={inputClass}>
-                {DEVICE_TYPES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            )}
           </div>
-          <Field label="P_emaildomain">
-            <input
-              value={emailDomain}
-              onChange={(e) => setEmailDomain(e.target.value)}
-              className={`${inputClass} w-48`}
-            />
-          </Field>
-          <button onClick={handleScore} disabled={scoreLoading} className={`${buttonClass} self-start`}>
-            {scoreLoading ? "Scoring…" : "Run detector"}
-          </button>
-          {scoreError && <p className="text-xs text-rose-400">{scoreError}</p>}
-
-          {scoreResult && (
-            <div className="grid grid-cols-1 gap-4 border-t border-zinc-800 pt-3 sm:grid-cols-2">
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs">
-                <dt className="text-zinc-500">raw probability</dt>
-                <dd className="text-zinc-200">{scoreResult.fraud_probability_raw}</dd>
-                <dt className="text-zinc-500">calibrated probability</dt>
-                <dd className="text-zinc-100">{scoreResult.fraud_probability_calibrated}</dd>
-                <dt className="text-zinc-500">model_version</dt>
-                <dd className="text-zinc-200">{scoreResult.model_version}</dd>
-                <dt className="text-zinc-500">calibration_version</dt>
-                <dd className="text-zinc-200">{scoreResult.calibration_version}</dd>
-              </dl>
-              <ul className="flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
-                {scoreResult.reason_codes.length === 0 ? (
-                  <li>· no material contributing features</li>
-                ) : (
-                  scoreResult.reason_codes.map((code, i) => <li key={i}>· {code}</li>)
-                )}
-              </ul>
-            </div>
-          )}
-        </Panel>
+        </details>
       </main>
     </div>
   );

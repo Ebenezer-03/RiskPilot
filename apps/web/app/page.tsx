@@ -12,9 +12,9 @@ const fadeUp = {
 };
 
 const primaryPill =
-  "rounded-full bg-neon px-7 py-3.5 text-sm font-medium text-obsidian transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40";
+  "rounded-full bg-neon px-8 py-4 text-sm font-medium text-obsidian transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40";
 const ghostPill =
-  "rounded-full border border-white/60 px-7 py-3.5 text-sm font-medium text-white transition-colors hover:border-white";
+  "rounded-full border border-white/60 px-8 py-4 text-sm font-medium text-white transition-colors hover:border-white";
 
 const STATUSES: Action[] = ["ALLOW", "STEP_UP", "REVIEW", "BLOCK"];
 
@@ -78,12 +78,12 @@ export default function Landing() {
       </header>
 
       {/* --- Hero --- */}
-      <section className="mx-auto flex max-w-[1200px] flex-col gap-8 px-6 pt-16 pb-20">
+      <section className="mx-auto flex max-w-[1200px] flex-col gap-8 px-6 pt-16 pb-24">
         <motion.p
           initial="hidden"
           animate="show"
           variants={fadeUp}
-          className="text-[9px] font-medium tracking-[0.05em] text-neon uppercase"
+          className="text-[11px] font-medium tracking-[0.05em] text-neon uppercase"
         >
           Cost-aware fraud decisioning · policy simulation
         </motion.p>
@@ -91,7 +91,7 @@ export default function Landing() {
           initial="hidden"
           animate="show"
           variants={fadeUp}
-          className="max-w-3xl text-5xl leading-[1.1] font-medium sm:text-6xl"
+          className="max-w-3xl text-[48px] leading-[1.1] font-medium sm:text-[64px]"
         >
           Every decision, priced.
         </motion.h1>
@@ -120,7 +120,7 @@ export default function Landing() {
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex flex-wrap items-center gap-4 rounded-3xl bg-mint-frost px-6 py-5 text-obsidian"
+            className="flex flex-wrap items-center gap-4 rounded-[20px] bg-mint-frost px-6 py-6 text-obsidian"
           >
             <span
               className={`border px-3 py-1 font-mono text-sm font-semibold tracking-wide ${STATUS_COLORS[exampleResult.decision]}`}
@@ -163,13 +163,13 @@ export default function Landing() {
         variants={fadeUp}
         className="mx-auto max-w-[1200px] px-6 pb-20"
       >
-        <div className="rounded-[60px] bg-mint-frost px-8 py-12 text-obsidian sm:px-14">
-          <p className="text-[9px] font-medium tracking-[0.05em] uppercase">The pipeline</p>
-          <h2 className="mt-2 max-w-xl text-3xl font-medium">One transaction, four accountable stages.</h2>
-          <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-0">
+        <div className="rounded-[60px] bg-mint-frost px-8 py-12 text-obsidian sm:px-16">
+          <p className="text-[11px] font-medium tracking-[0.05em] uppercase">The pipeline</p>
+          <h2 className="mt-2 max-w-xl text-[32px] font-medium">One transaction, four accountable stages.</h2>
+          <div className="mt-12 flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-0">
             {MODULES.map((mod, i) => (
               <div key={mod.label} className="flex flex-1 items-center">
-                <div className="flex flex-1 flex-col gap-2 rounded-2xl bg-white p-5 shadow-[1px_0_9px_2px_rgba(0,0,0,0.04)]">
+                <div className="flex flex-1 flex-col gap-2 rounded-[10px] bg-white p-6 shadow-[1px_0_9px_2px_rgba(0,0,0,0.04)]">
                   <span className={`h-2 w-8 rounded-full ${mod.color}`} />
                   <span className="text-base font-medium">{mod.label}</span>
                   <span className="text-sm text-slate-text">{mod.detail}</span>
@@ -189,13 +189,13 @@ export default function Landing() {
         variants={fadeUp}
         className="mx-auto max-w-[1200px] px-6 pb-24"
       >
-        <p className="text-[9px] font-medium tracking-[0.05em] text-neon uppercase">Go to</p>
+        <p className="text-[11px] font-medium tracking-[0.05em] text-neon uppercase">Go to</p>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {SCREENS.map((screen) => (
             <Link
               key={screen.href}
               href={screen.href}
-              className="flex flex-col gap-2 rounded-2xl border border-white/10 p-6 transition-colors hover:border-neon"
+              className="flex flex-col gap-2 rounded-[20px] border border-white/10 p-6 transition-colors hover:border-neon"
             >
               <span className="text-lg font-medium">{screen.title}</span>
               <span className="text-sm text-white/60">{screen.description}</span>
