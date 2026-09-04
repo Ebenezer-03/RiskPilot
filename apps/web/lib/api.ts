@@ -156,3 +156,159 @@ export function decide(payload: DecideRequest): Promise<DecideResponse> {
     body: JSON.stringify(payload),
   });
 }
+
+// --- Policy registry (ticket 09) --------------------------------------------------
+
+export interface CostAssumptions {
+  fraud_loss_rate_base: number;
+  fraud_loss_new_device_bonus: number;
+  false_decline_rate_base: number;
+  false_decline_new_customer_bonus: number;
+  false_decline_amount_band_bonus: Record<AmountBand, number>;
+  review_cost: number;
+  review_catch_rate: number;
+  review_friction_rate: number;
+  step_up_friction_cost: number;
+  step_up_prevent_rate: number;
+  step_up_abandonment_rate: number;
+}
+
+// The day-1 defaults from cost_engine.py / policy.py, mirrored here purely
+// as sensible starting values for a new candidate policy's form - the
+// backend applies its own defaults independently for any field omitted
+// from a request.
+export const DEFAULT_COST_ASSUMPTIONS: CostAssumptions = {
+  fraud_loss_rate_base: 1.1,
+  fraud_loss_new_device_bonus: 0.1,
+  false_decline_rate_base: 0.15,
+  false_decline_new_customer_bonus: 0.15,
+  false_decline_amount_band_bonus: { low: 0.0, medium: 0.05, high: 0.1 },
+  review_cost: 80,
+  review_catch_rate: 0.85,
+  review_friction_rate: 0.012,
+  step_up_friction_cost: 150,
+  step_up_prevent_rate: 0.7,
+  step_up_abandonment_rate: 0.05,
+};
+
+export const DEFAULT_REVIEW_CAPACITY = 200;
+
+export type PolicyStatus = "DRAFT" | "SIMULATED" | "APPROVED" | "CANARY" | "ACTIVE" | "ROLLED_BACK";
+
+export interface SegmentReplayMetrics {
+  transaction_count: number;
+  fraud_count: number;
+  allow_count: number;
+  fraud_loss: number;
+  legitimate_gmv_blocked: number;
+  legitimate_blocked_count: number;
+  transactions_caught: number;
+  review_count: number;
+  review_eligible_count: number;
+  net_expected_loss: number;
+}
+
+export interface ReplayComparison {
+  baseline: SegmentReplayMetrics;
+  candidate: SegmentReplayMetrics;
+  delta: SegmentReplayMetrics;
+}
+
+export interface ReplayResult {
+  baseline_policy_id: string;
+  candidate_policy_id: string;
+  transactions_replayed: number;
+  transactions_skipped: number;
+  aggregate: ReplayComparison;
+  by_segment: Record<string, ReplayComparison>;
+  calibration_brier_score: number;
+  window_days: number;
+  disclaimer: string;
+}
+
+export interface PolicyRecord {
+  policy_id: string;
+  name: string;
+  status: PolicyStatus;
+  cost_assumptions: CostAssumptions;
+  review_capacity: number;
+  baseline_policy_id: string | null;
+  // Untyped at the wire level (stored as JSONB) - shaped like ReplayResult
+  // once a policy has been simulated at least once, per
+  // routers/policies.py's `_replay_result_to_dict` (dataclasses.asdict).
+  replay_result: ReplayResult | null;
+  guardrail_violations: { guardrail: string; detail: string }[] | null;
+  created_at: string;
+  updated_at: string;
+  simulated_at: string | null;
+  activated_at: string | null;
+}
+
+export interface PolicyWritePayload {
+  name: string;
+  cost_assumptions?: Partial<CostAssumptions>;
+  review_capacity: number;
+}
+
+export function listPolicies(): Promise<PolicyRecord[]> {
+  return request("/policies");
+}
+
+export function getPolicy(policyId: string): Promise<PolicyRecord> {
+  return request(`/policies/${encodeURIComponent(policyId)}`);
+}
+
+export function createPolicy(policyId: string, payload: PolicyWritePayload): Promise<PolicyRecord> {
+  return request("/policies", {
+    method: "POST",
+    body: JSON.stringify({ policy_id: policyId, ...payload }),
+  });
+}
+
+export function updatePolicy(policyId: string, payload: PolicyWritePayload): Promise<PolicyRecord> {
+  return request(`/policies/${encodeURIComponent(policyId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface ReplayWindow {
+  data_source?: DataSource | null;
+  limit?: number;
+}
+
+export function simulatePolicy(
+  policyId: string,
+  options: { baselinePolicyId?: string | null; window?: ReplayWindow } = {},
+): Promise<PolicyRecord> {
+  return request(`/policies/${encodeURIComponent(policyId)}/simulate`, {
+    method: "POST",
+    body: JSON.stringify({
+      baseline_policy_id: options.baselinePolicyId ?? null,
+      window: options.window ?? {},
+    }),
+  });
+}
+
+export interface GuardrailThresholds {
+  max_approval_rate_drop?: number | null;
+  min_segment_sample_size?: number | null;
+  max_false_positive_rate_increase?: number | null;
+  max_calibration_brier_score?: number | null;
+}
+
+export interface PolicyPromotionResult {
+  policy: PolicyRecord;
+  approved: boolean;
+  violations: { guardrail: string; detail: string }[];
+}
+
+export function promotePolicy(
+  policyId: string,
+  thresholds: GuardrailThresholds = {},
+): Promise<PolicyPromotionResult> {
+  return request(`/policies/${encodeURIComponent(policyId)}/promote`, {
+    method: "POST",
+    body: JSON.stringify({ thresholds }),
+  });
+}
