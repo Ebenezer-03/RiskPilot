@@ -137,6 +137,44 @@ def test_audit_for_unknown_transaction_returns_404():
     assert response.status_code == 404
 
 
+def test_audit_trends_reflects_a_fresh_decision():
+    """A synthetic transaction is labeled (is_fraud is never null for it -
+    see transactions.py), so deciding on one always moves either
+    approval_rate or false_positive_rate's denominator/numerator by
+    exactly one - a real, checkable signal rather than just "the endpoint
+    returns 200"."""
+    _skip_without_db()
+
+    before = client.get("/audit/trends/daily", params={"days": 1})
+    assert before.status_code == 200, before.text
+    total_before = sum(p["total_decisions"] for p in before.json()["points"])
+
+    txn = _create_synthetic_transaction()
+    client.post("/decide", json={"transaction_id": txn["transaction_id"], "probability": 0.5})
+
+    after = client.get("/audit/trends/daily", params={"days": 1})
+    assert after.status_code == 200, after.text
+    body = after.json()
+    assert body["window_days"] == 1
+    total_after = sum(p["total_decisions"] for p in body["points"])
+    assert total_after == total_before + 1
+
+    for point in body["points"]:
+        assert 0.0 <= point["approval_rate"] <= 1.0
+        if point["false_positive_rate"] is not None:
+            assert 0.0 <= point["false_positive_rate"] <= 1.0
+
+
+def test_audit_trends_rejects_out_of_range_days():
+    _skip_without_db()
+
+    response = client.get("/audit/trends/daily", params={"days": 0})
+    assert response.status_code == 422
+
+    response = client.get("/audit/trends/daily", params={"days": 366})
+    assert response.status_code == 422
+
+
 def test_decide_without_transaction_id_is_not_persisted():
     """An ad-hoc /decide call with no transaction_id has nothing to audit
     by ID - it isn't stored, and this isn't a failure mode (see

@@ -72,3 +72,38 @@ def get_decisions_for_transaction(conn: psycopg.Connection, transaction_id: str)
         cur.execute(_SELECT_BY_TRANSACTION_SQL, {"transaction_id": transaction_id})
         rows = cur.fetchall()
         return db.rows_to_dicts(cur, rows)
+
+
+# Ticket 12's Audit & Monitoring dashboard needs an approval-rate/fraud-loss/
+# false-positive trend, not just a single transaction's trace. This is the
+# only aggregate query in the module (everything else here is keyed on one
+# transaction_id) - it joins decisions back to transactions for is_fraud/
+# amount, since neither is duplicated onto the decisions row itself.
+# false_positive_count/fraud_loss are only meaningful over *labeled*
+# transactions (is_fraud IS NOT NULL) - live Razorpay events have no label
+# and are silently excluded from those two columns rather than treated as
+# known-legitimate, which would understate both.
+_DAILY_TRENDS_SQL = """
+SELECT
+    date_trunc('day', d.decided_at) AS day,
+    count(*) AS total_decisions,
+    count(*) FILTER (WHERE d.action = 'ALLOW') AS allow_count,
+    count(*) FILTER (WHERE d.action = 'BLOCK' AND t.is_fraud = false) AS false_positive_count,
+    count(*) FILTER (WHERE t.is_fraud IS NOT NULL) AS labeled_count,
+    coalesce(sum(t.amount) FILTER (WHERE d.action = 'ALLOW' AND t.is_fraud = true), 0) AS fraud_loss
+FROM decisions d
+JOIN transactions t ON t.transaction_id = d.transaction_id
+WHERE d.decided_at >= now() - (%(days)s * interval '1 day')
+GROUP BY 1
+ORDER BY 1;
+"""
+
+
+def get_daily_trends(conn: psycopg.Connection, days: int) -> list[dict[str, Any]]:
+    """Oldest day first, one row per day that had at least one decision in
+    the requested window - days with zero decisions simply don't appear
+    (not zero-filled), since a trend chart can space gaps itself."""
+    with conn.cursor() as cur:
+        cur.execute(_DAILY_TRENDS_SQL, {"days": days})
+        rows = cur.fetchall()
+        return db.rows_to_dicts(cur, rows)

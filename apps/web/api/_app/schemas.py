@@ -194,6 +194,30 @@ class AuditTraceResponse(BaseModel):
     decisions: list[DecisionRecord]
 
 
+class TrendPoint(BaseModel):
+    """One day's worth of decisions (ticket 12's Audit & Monitoring
+    dashboard). Rates are computed here rather than in SQL so a zero
+    denominator is handled once, in one place, rather than risking a
+    division-by-zero per row at the database layer."""
+
+    day: datetime
+    total_decisions: int
+    approval_rate: float
+    # Both null, not zero, when the window has no *labeled* transactions
+    # (e.g. only live Razorpay events, which carry no ground truth) - a
+    # bare 0.0 would misleadingly read as "no false positives" rather than
+    # "nothing to measure against."
+    false_positive_rate: float | None
+    fraud_loss: float
+
+
+class AuditTrendsResponse(BaseModel):
+    window_days: int
+    # Oldest first, one entry per day that had at least one decision -
+    # days with none are simply absent, not zero-filled.
+    points: list[TrendPoint]
+
+
 class CostAssumptionsRequest(BaseModel):
     """The editable cost knobs behind a policy (cost_engine.CostAssumptions).
     Every field defaults to the day-1 global default, so a caller only
