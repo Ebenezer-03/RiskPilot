@@ -112,6 +112,7 @@ export default function LiveDecisionConsole() {
     setSyntheticError(null);
     setScoreResult(null);
     setDecideResult(null);
+    setDecideError(null);
     try {
       const [created] = await generateSyntheticTransactions(1);
       setSynthetic(created);
@@ -140,6 +141,10 @@ export default function LiveDecisionConsole() {
       });
       setScoreResult(result);
       setProbability(result.fraud_probability_calibrated.toFixed(4));
+      // The probability just changed underneath it - a decide error from
+      // before this score is no longer about what's in the field now.
+      setDecideResult(null);
+      setDecideError(null);
     } catch (err) {
       setScoreError(err instanceof ApiError ? err.message : "Failed to score transaction.");
     } finally {
