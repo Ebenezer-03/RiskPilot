@@ -6,6 +6,12 @@ RiskPilot transforms raw fraud probabilities into **cost-minimizing, capacity-aw
 
 ### Fraud detection predicts risk. RiskPilot decides the economic action.
 
+<br/>
+
+![RiskPilot Interface Preview](docs/assets/riskpilot-demo.gif)
+
+<br/>
+
 ![Next.js](https://img.shields.io/badge/Next.js%2015-000000?logo=nextdotjs&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Python](https://img.shields.io/badge/Python%203.12-3776AB?logo=python&logoColor=white)
