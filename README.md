@@ -35,7 +35,7 @@ RiskPilot provides an end-to-end framework uniting cost-minimizing decisioning, 
 
 ---
 
-## What you actually do with it
+## What we can actually do with it
 
 | Action | Capability |
 |---|---|
