@@ -105,6 +105,19 @@ export class ApiError extends Error {
   }
 }
 
+export interface HealthResponse {
+  status: string;
+  db: "connected" | "not_configured" | "error";
+}
+
+/** Liveness + DB-connectivity check (ticket 01d) - the homepage renders
+ * this so a visitor (or a judge) sees a real, live signal that the
+ * deployed backend can actually reach its database, not just that the
+ * static frontend loaded. */
+export function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/health");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -344,6 +357,27 @@ export interface AuditTraceResponse {
 
 export function getAuditTrace(transactionId: string): Promise<AuditTraceResponse> {
   return request(`/audit/${encodeURIComponent(transactionId)}`);
+}
+
+// --- Razorpay Test Mode auto-responder (ticket 14) --------------------------
+
+export interface RazorpayCheckoutRequest {
+  merchant_category: MerchantCategory;
+  amount: number;
+  is_returning_customer: boolean;
+  is_known_device: boolean;
+}
+
+export interface RazorpayCheckoutResponse {
+  transaction_id: string;
+  razorpay_order_id: string;
+  razorpay_key_id: string;
+  amount_paise: number;
+  currency: string;
+}
+
+export function createRazorpayCheckout(payload: RazorpayCheckoutRequest): Promise<RazorpayCheckoutResponse> {
+  return request<RazorpayCheckoutResponse>("/razorpay/checkout", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export interface TrendPoint {

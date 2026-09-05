@@ -46,6 +46,24 @@ _NEW_DEVICE_MULTIPLIER = 2.5
 _AMOUNT_BAND_MULTIPLIER = {"low": 1.0, "medium": 1.3, "high": 2.0}
 
 
+def estimate_fraud_probability(amount_band: str, is_returning_customer: bool, is_known_device: bool) -> float:
+    """The same illustrative heuristic the synthetic generator uses,
+    factored out so the Razorpay live path (ticket 14) can price a real
+    payment without a real ML score - a real Razorpay Test Mode webhook
+    payload doesn't carry the IEEE-CIS-shaped features `/score` needs, so
+    there's no real detector output to fall back to here. This is
+    explicitly the same documented demo assumption as everywhere else in
+    the cost/segment model, not a claim of real fraud detection on live
+    traffic."""
+    fraud_probability = _BASE_FRAUD_RATE
+    if not is_returning_customer:
+        fraud_probability *= _NEW_CUSTOMER_MULTIPLIER
+    if not is_known_device:
+        fraud_probability *= _NEW_DEVICE_MULTIPLIER
+    fraud_probability *= _AMOUNT_BAND_MULTIPLIER[amount_band]
+    return min(fraud_probability, 0.95)
+
+
 def generate_synthetic_transaction(rng: random.Random | None = None) -> dict[str, Any]:
     """One synthetic transaction with realistic feature correlations. Not a
     real transaction, not derived from real data - explicitly `data_source:
@@ -63,13 +81,7 @@ def generate_synthetic_transaction(rng: random.Random | None = None) -> dict[str
     # not independent coin flips.
     is_known_device = rng.random() < (0.85 if is_returning_customer else 0.25)
 
-    fraud_probability = _BASE_FRAUD_RATE
-    if not is_returning_customer:
-        fraud_probability *= _NEW_CUSTOMER_MULTIPLIER
-    if not is_known_device:
-        fraud_probability *= _NEW_DEVICE_MULTIPLIER
-    fraud_probability *= _AMOUNT_BAND_MULTIPLIER[amount_band]
-    fraud_probability = min(fraud_probability, 0.95)
+    fraud_probability = estimate_fraud_probability(amount_band, is_returning_customer, is_known_device)
     is_fraud = rng.random() < fraud_probability
 
     return {

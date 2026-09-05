@@ -353,6 +353,12 @@ class PolicyRecord(BaseModel):
     updated_at: datetime
     simulated_at: datetime | None
     activated_at: datetime | None
+    # Ticket 16 (stretch): CANARY's own 95/5-subsample replay, kept separate
+    # from `replay_result` (the full-window replay from /simulate); whichever
+    # policy this one superseded on activation, so a later rollback can
+    # revert the active-policy pointer to it.
+    canary_replay_result: dict[str, Any] | None = None
+    superseded_policy_id: str | None = None
 
 
 class PolicySimulateRequest(BaseModel):
@@ -380,6 +386,18 @@ class PolicyPromoteRequest(BaseModel):
     thresholds: GuardrailThresholdsRequest = Field(default_factory=GuardrailThresholdsRequest)
 
 
+class PolicyCanaryRequest(BaseModel):
+    """Same window shape as /simulate (the historical pool the 95/5 subsample
+    is drawn from) plus the same overridable thresholds as /promote - a
+    canary's guardrail check is the exact same evaluator, just against a
+    smaller sample, so it needs the same override escape hatch (a small
+    subsample will realistically trip `min_segment_sample_size` at its
+    default far more often than a full-window replay would)."""
+
+    window: ReplayWindowRequest = Field(default_factory=ReplayWindowRequest)
+    thresholds: GuardrailThresholdsRequest = Field(default_factory=GuardrailThresholdsRequest)
+
+
 class GuardrailViolationResponse(BaseModel):
     guardrail: str
     detail: str
@@ -388,7 +406,48 @@ class GuardrailViolationResponse(BaseModel):
 class PolicyPromotionResponse(BaseModel):
     policy: PolicyRecord
     approved: bool
-    # Empty when approved=True. Non-empty (and the policy stays SIMULATED)
-    # when approved=False - issue #1: "a rejected candidate policy stays in
-    # SIMULATED with the violated guardrail(s) reported."
+    # Empty when approved=True. Non-empty (and the policy stays SIMULATED
+    # or CANARY - whichever it was attempted from) when approved=False -
+    # issue #1: "a rejected candidate policy stays in SIMULATED with the
+    # violated guardrail(s) reported."
     violations: list[GuardrailViolationResponse]
+
+
+class PolicyRollbackResponse(BaseModel):
+    policy: PolicyRecord
+    # The policy reactivated as a result (whichever this one superseded),
+    # or None if this was the first-ever activated policy - the system
+    # then falls back to the day-1 default, same as "no ACTIVE policy" (its
+    # existing behavior) rather than a new state to model.
+    reactivated_policy: PolicyRecord | None
+
+
+# --- Razorpay Test Mode auto-responder (ticket 14) --------------------------
+
+
+class RazorpayCheckoutRequest(BaseModel):
+    """The checkout trigger page's inputs - a demo stand-in for what a real
+    checkout flow would already know about the customer/device, since a
+    Razorpay Test Mode payment carries no IEEE-CIS-shaped ML features and
+    no real customer history to source these from."""
+
+    merchant_category: MerchantCategory
+    amount: float = Field(gt=0, description="INR, same units as everywhere else in the app (not paise).")
+    is_returning_customer: bool = False
+    is_known_device: bool = False
+
+
+class RazorpayCheckoutResponse(BaseModel):
+    transaction_id: str
+    razorpay_order_id: str
+    razorpay_key_id: str
+    amount_paise: int
+    currency: str
+
+
+class RazorpayWebhookResult(BaseModel):
+    event: str
+    transaction_id: str | None = None
+    decision: Action | None = None
+    refund_issued: bool = False
+    detail: str | None = None

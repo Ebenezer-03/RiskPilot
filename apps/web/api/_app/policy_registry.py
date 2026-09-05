@@ -23,7 +23,8 @@ from . import db
 _COLUMNS = """
     policy_id, name, status, cost_assumptions, review_capacity,
     baseline_policy_id, replay_result, guardrail_violations,
-    created_at, updated_at, simulated_at, activated_at
+    created_at, updated_at, simulated_at, activated_at,
+    canary_replay_result, superseded_policy_id
 """
 
 _INSERT_SQL = f"""
@@ -60,15 +61,40 @@ RETURNING {_COLUMNS};
 
 _TRANSITION_TO_ACTIVE_SQL = f"""
 UPDATE policies
-SET status = 'ACTIVE', guardrail_violations = NULL, activated_at = now(), updated_at = now()
+SET status = 'ACTIVE', guardrail_violations = NULL, activated_at = now(), updated_at = now(),
+    superseded_policy_id = %(superseded_policy_id)s
+WHERE policy_id = %(policy_id)s AND status IN ('SIMULATED', 'CANARY')
+RETURNING {_COLUMNS};
+"""
+
+_TRANSITION_TO_CANARY_SQL = f"""
+UPDATE policies
+SET status = 'CANARY', canary_replay_result = %(canary_replay_result)s, guardrail_violations = NULL, updated_at = now()
 WHERE policy_id = %(policy_id)s AND status = 'SIMULATED'
 RETURNING {_COLUMNS};
 """
 
+_TRANSITION_TO_ROLLED_BACK_SQL = f"""
+UPDATE policies
+SET status = 'ROLLED_BACK', updated_at = now()
+WHERE policy_id = %(policy_id)s AND status IN ('ACTIVE', 'CANARY')
+RETURNING {_COLUMNS};
+"""
+
+_REACTIVATE_SQL = f"""
+UPDATE policies
+SET status = 'ACTIVE', activated_at = now(), updated_at = now()
+WHERE policy_id = %(policy_id)s
+RETURNING {_COLUMNS};
+"""
+
+# A candidate's own /simulate-time guardrail rejection can happen while
+# SIMULATED or CANARY (the canary-vetting step reuses this same recorder -
+# ticket 16's "no new evaluation logic" acceptance criterion).
 _RECORD_REJECTION_SQL = f"""
 UPDATE policies
 SET guardrail_violations = %(guardrail_violations)s, updated_at = now()
-WHERE policy_id = %(policy_id)s AND status = 'SIMULATED'
+WHERE policy_id = %(policy_id)s AND status IN ('SIMULATED', 'CANARY')
 RETURNING {_COLUMNS};
 """
 
@@ -173,12 +199,52 @@ def transition_to_simulated(
 
 
 def transition_to_active(conn: psycopg.Connection, policy_id: str) -> dict[str, Any] | None:
+    """SIMULATED -> ACTIVE (the committed direct path) or CANARY -> ACTIVE
+    (ticket 16's stretch path) - same SQL handles both source statuses.
+    Captures whichever policy is current-ACTIVE right now as this row's
+    `superseded_policy_id`, so a later ROLLED_BACK can revert to it."""
+    superseded = get_current_active_policy(conn)
+    superseded_policy_id = superseded["policy_id"] if superseded is not None else None
     with conn.cursor() as cur:
-        cur.execute(_TRANSITION_TO_ACTIVE_SQL, {"policy_id": policy_id})
+        cur.execute(_TRANSITION_TO_ACTIVE_SQL, {"policy_id": policy_id, "superseded_policy_id": superseded_policy_id})
         row = cur.fetchone()
         result = db.row_to_dict(cur, row) if row is not None else None
     conn.commit()
     return result
+
+
+def transition_to_canary(conn: psycopg.Connection, policy_id: str, *, canary_replay_result: dict) -> dict[str, Any] | None:
+    """SIMULATED -> CANARY (ticket 16's stretch path): an optional staging
+    step before ACTIVE, gated by the same guardrails as a direct promotion
+    but evaluated against a 95/5 historical-replay subsample rather than
+    the full window - see routers/policies.py's /canary handler."""
+    with conn.cursor() as cur:
+        cur.execute(_TRANSITION_TO_CANARY_SQL, {"policy_id": policy_id, "canary_replay_result": Json(canary_replay_result)})
+        row = cur.fetchone()
+        result = db.row_to_dict(cur, row) if row is not None else None
+    conn.commit()
+    return result
+
+
+def transition_to_rolled_back(conn: psycopg.Connection, policy_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """ACTIVE/CANARY -> ROLLED_BACK, reverting the active-policy pointer to
+    whichever policy this one superseded (if any) by reactivating it -
+    ticket 16's explicit acceptance criterion. Returns
+    (rolled_back_row, reactivated_row_or_None)."""
+    with conn.cursor() as cur:
+        cur.execute(_TRANSITION_TO_ROLLED_BACK_SQL, {"policy_id": policy_id})
+        row = cur.fetchone()
+        rolled_back = db.row_to_dict(cur, row) if row is not None else None
+
+    reactivated = None
+    if rolled_back is not None and rolled_back["superseded_policy_id"]:
+        with conn.cursor() as cur:
+            cur.execute(_REACTIVATE_SQL, {"policy_id": rolled_back["superseded_policy_id"]})
+            reactivated_row = cur.fetchone()
+            reactivated = db.row_to_dict(cur, reactivated_row) if reactivated_row is not None else None
+
+    conn.commit()
+    return rolled_back, reactivated
 
 
 def record_guardrail_rejection(

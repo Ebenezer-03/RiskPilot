@@ -1,0 +1,31 @@
+# Ticket 15's "reviewer-runnable local environment" - `docker compose up`
+# from a clean clone starts both apps. Copy apps/web/.env.example to a
+# repo-root .env and fill in real values first; without one, the stack
+# still starts (see .env.example's own comments on graceful degradation).
+services:
+  backend:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./.env
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy

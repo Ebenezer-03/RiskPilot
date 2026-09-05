@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+.venv
+.vercel
+.env*.local
+api/**/__pycache__
+api/**/.pytest_cache
+*.tsbuildinfo

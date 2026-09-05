@@ -5,6 +5,7 @@ values but unreachable through this router - see db.py's schema comment.
 
 from __future__ import annotations
 
+import random
 from dataclasses import asdict
 
 import psycopg
@@ -18,10 +19,12 @@ from ..replay import ReplayComparison, ReplayResult, SegmentReplayMetrics
 from ..schemas import (
     CostAssumptionsRequest,
     GuardrailViolationResponse,
+    PolicyCanaryRequest,
     PolicyCreateRequest,
     PolicyPromoteRequest,
     PolicyPromotionResponse,
     PolicyRecord,
+    PolicyRollbackResponse,
     PolicySimulateRequest,
     PolicyWriteRequest,
 )
@@ -44,6 +47,8 @@ def _record_to_schema(row: dict) -> PolicyRecord:
         updated_at=row["updated_at"],
         simulated_at=row["simulated_at"],
         activated_at=row["activated_at"],
+        canary_replay_result=row.get("canary_replay_result"),
+        superseded_policy_id=row.get("superseded_policy_id"),
     )
 
 
@@ -208,16 +213,19 @@ async def simulate_policy(policy_id: str, payload: PolicySimulateRequest) -> Pol
 
 @router.post("/{policy_id}/promote", response_model=PolicyPromotionResponse)
 async def promote_policy(policy_id: str, payload: PolicyPromoteRequest) -> PolicyPromotionResponse:
-    """SIMULATED -> ACTIVE, gated by the five guardrails (ticket 09)
-    evaluated against the replay output stored by /simulate - not
-    recomputed, so a promotion decision is always traceable to the exact
-    replay it was judged against."""
+    """SIMULATED -> ACTIVE (the committed direct path) or CANARY -> ACTIVE
+    (ticket 16's stretch path, after the canary subsample already passed
+    its own guardrail check at /canary) - gated by the five guardrails
+    (ticket 09) evaluated against the full-window replay output stored by
+    /simulate, not recomputed, so a promotion decision is always traceable
+    to the exact replay it was judged against."""
     conn = _get_connection()
     with conn:
         row = _get_or_404(conn, policy_id)
-        if row["status"] != "SIMULATED":
+        if row["status"] not in ("SIMULATED", "CANARY"):
             raise HTTPException(
-                status_code=409, detail=f"policy {policy_id!r} is {row['status']}, not SIMULATED - cannot promote"
+                status_code=409,
+                detail=f"policy {policy_id!r} is {row['status']}, not SIMULATED/CANARY - cannot promote",
             )
 
         replay_result = _replay_result_from_dict(row["replay_result"])
@@ -246,6 +254,101 @@ async def promote_policy(policy_id: str, payload: PolicyPromoteRequest) -> Polic
         updated = policy_registry.transition_to_active(conn, policy_id)
         updated = _or_409_lost_race(updated, policy_id, "promote")
     return PolicyPromotionResponse(policy=_record_to_schema(updated), approved=True, violations=[])
+
+
+# Ticket 16 (stretch) - a real random subsample (no fixed seed) of "canary
+# traffic exposure", not a deterministic slice of the historical window.
+_CANARY_TRAFFIC_FRACTION = 0.05
+
+
+@router.post("/{policy_id}/canary", response_model=PolicyPromotionResponse)
+async def canary_policy(policy_id: str, payload: PolicyCanaryRequest) -> PolicyPromotionResponse:
+    """SIMULATED -> CANARY: an optional staging step before /promote's
+    SIMULATED|CANARY -> ACTIVE. Reuses the exact same replay engine
+    (run_replay) and guardrail evaluator (evaluate_guardrails) /simulate
+    and /promote already use - ticket 16's explicit "no new evaluation
+    logic" acceptance criterion - just against a 95/5 historical-traffic
+    subsample instead of the full window, as a simulated canary exposure.
+    The baseline is always whichever policy this candidate was already
+    replayed against at /simulate (not caller-supplied), so a canary check
+    stays comparable to the full-window replay it's meant to spot-check."""
+    conn = _get_connection()
+    with conn:
+        row = _get_or_404(conn, policy_id)
+        if row["status"] != "SIMULATED":
+            raise HTTPException(
+                status_code=409, detail=f"policy {policy_id!r} is {row['status']}, not SIMULATED - cannot canary"
+            )
+
+        baseline_row = _get_or_404(conn, row["baseline_policy_id"])
+        baseline_policy = policy_from_request(
+            CostAssumptionsRequest(**baseline_row["cost_assumptions"]), baseline_row["review_capacity"]
+        )
+        candidate_policy = policy_from_request(CostAssumptionsRequest(**row["cost_assumptions"]), row["review_capacity"])
+
+        transactions, _skipped = fetch_replay_window(conn, payload.window)
+        if not transactions:
+            raise HTTPException(
+                status_code=422,
+                detail="No labeled, scoreable transactions found in the requested window - nothing to canary-test.",
+            )
+        sample_size = max(1, round(len(transactions) * _CANARY_TRAFFIC_FRACTION))
+        canary_transactions = random.sample(transactions, sample_size)
+
+        canary_result = run_replay(
+            canary_transactions,
+            baseline_policy_id=row["baseline_policy_id"],
+            baseline_policy=baseline_policy,
+            candidate_policy_id=policy_id,
+            candidate_policy=candidate_policy,
+        )
+
+        thresholds = GuardrailThresholds(
+            **{field: value for field, value in payload.thresholds.model_dump().items() if value is not None}
+        )
+        violations = evaluate_guardrails(
+            canary_result, candidate_review_capacity=row["review_capacity"], thresholds=thresholds
+        )
+
+        if violations:
+            updated = policy_registry.record_guardrail_rejection(
+                conn, policy_id, violations=[{"guardrail": v.guardrail, "detail": v.detail} for v in violations]
+            )
+            updated = _or_409_lost_race(updated, policy_id, "record the rejected canary")
+            return PolicyPromotionResponse(
+                policy=_record_to_schema(updated),
+                approved=False,
+                violations=[GuardrailViolationResponse(guardrail=v.guardrail, detail=v.detail) for v in violations],
+            )
+
+        updated = policy_registry.transition_to_canary(
+            conn, policy_id, canary_replay_result=_replay_result_to_dict(canary_result)
+        )
+        updated = _or_409_lost_race(updated, policy_id, "canary")
+    return PolicyPromotionResponse(policy=_record_to_schema(updated), approved=True, violations=[])
+
+
+@router.post("/{policy_id}/rollback", response_model=PolicyRollbackResponse)
+async def rollback_policy(policy_id: str) -> PolicyRollbackResponse:
+    """ACTIVE/CANARY -> ROLLED_BACK, reverting the active-policy pointer to
+    whichever policy this one superseded on activation (ticket 16's
+    explicit acceptance criterion) - or to nothing, if this was the
+    first-ever activated policy, in which case the system falls back to
+    the day-1 default the same way "no ACTIVE policy exists" already does
+    everywhere else (/decide, /simulate's default baseline)."""
+    conn = _get_connection()
+    with conn:
+        row = _get_or_404(conn, policy_id)
+        if row["status"] not in ("ACTIVE", "CANARY"):
+            raise HTTPException(
+                status_code=409, detail=f"policy {policy_id!r} is {row['status']}, not ACTIVE/CANARY - cannot roll back"
+            )
+        rolled_back, reactivated = policy_registry.transition_to_rolled_back(conn, policy_id)
+        rolled_back = _or_409_lost_race(rolled_back, policy_id, "roll back")
+    return PolicyRollbackResponse(
+        policy=_record_to_schema(rolled_back),
+        reactivated_policy=_record_to_schema(reactivated) if reactivated is not None else None,
+    )
 
 
 def _replay_result_to_dict(result: ReplayResult) -> dict:

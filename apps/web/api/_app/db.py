@@ -101,9 +101,9 @@ CREATE INDEX IF NOT EXISTS idx_decisions_transaction_id ON decisions (transactio
 
 -- Policy registry (ticket 09). All six lifecycle values from issue #1's
 -- Implementation Decisions are present in the CHECK constraint from day
--- one, but only DRAFT -> SIMULATED -> ACTIVE is ever written by this
--- system today - APPROVED/CANARY/ROLLED_BACK are reachable in the schema,
--- not yet in the API (see policy_registry.py/routers/policies.py).
+-- one. DRAFT -> SIMULATED -> ACTIVE is the committed direct path;
+-- SIMULATED -> CANARY -> ACTIVE and ACTIVE/CANARY -> ROLLED_BACK are
+-- ticket 16's stretch additions (see policy_registry.py/routers/policies.py).
 CREATE TABLE IF NOT EXISTS policies (
     id BIGSERIAL PRIMARY KEY,
     policy_id TEXT NOT NULL UNIQUE,
@@ -127,6 +127,17 @@ CREATE TABLE IF NOT EXISTS policies (
     activated_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_policies_status ON policies (status);
+
+-- Ticket 16 (stretch): CANARY replays a 95/5 historical-traffic subsample
+-- through the same replay engine as /simulate's full-window run, kept
+-- separate from `replay_result` so both are independently inspectable.
+-- `superseded_policy_id` is captured at ACTIVE-transition time (whichever
+-- policy was current-ACTIVE immediately before) so ROLLED_BACK can revert
+-- the "current active policy" pointer to it - added via ALTER rather than
+-- inline in CREATE TABLE since this table predates the ticket (no
+-- migration framework yet; see ensure_schema's docstring).
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS canary_replay_result JSONB;
+ALTER TABLE policies ADD COLUMN IF NOT EXISTS superseded_policy_id TEXT;
 """
 
 

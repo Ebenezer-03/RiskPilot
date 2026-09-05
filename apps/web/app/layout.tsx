@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
+import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import "./globals.css";
 
 // Inter substitutes for the design reference's Aeonik/AeonikFono (both
@@ -26,7 +27,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-obsidian font-sans text-white">{children}</body>
+      <body className="min-h-full flex flex-col bg-obsidian font-sans text-white">
+        <TooltipPrimitive.Provider delayDuration={200}>{children}</TooltipPrimitive.Provider>
+      </body>
     </html>
   );
 }

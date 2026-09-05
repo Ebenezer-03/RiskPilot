@@ -3,15 +3,18 @@
 import { useEffect, useState } from "react";
 import { History, SearchX } from "lucide-react";
 import { NavHeader } from "@/app/components/nav-header";
-import { Field, Panel, STATUS_COLORS, Sparkline, formatCurrency, inputClass, primaryButtonClass } from "@/app/components/ui";
 import {
-  ApiError,
-  getAuditTrace,
-  getAuditTrends,
-  type Action,
-  type AuditTraceResponse,
-  type AuditTrendsResponse,
-} from "@/lib/api";
+  CostBars,
+  Field,
+  NextStepCTA,
+  Panel,
+  STATUS_COLORS,
+  Sparkline,
+  formatCurrency,
+  inputClass,
+  primaryButtonClass,
+} from "@/app/components/ui";
+import { ApiError, getAuditTrace, getAuditTrends, type AuditTraceResponse, type AuditTrendsResponse } from "@/lib/api";
 
 const RECENT_LOOKUPS_KEY = "riskpilot.audit.recent_lookups";
 const MAX_RECENT_LOOKUPS = 8;
@@ -97,30 +100,30 @@ export default function AuditMonitoring() {
 
       <main className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
         <Panel title={`Trends · last ${trends?.window_days ?? 30} day(s) · GET /audit/trends/daily`}>
-          {trendsError && <p className="text-xs text-rose-400">{trendsError}</p>}
-          {!trends && !trendsError && <p className="text-xs text-zinc-500">Loading…</p>}
+          {trendsError && <p className="text-sm text-rose-400">{trendsError}</p>}
+          {!trends && !trendsError && <p className="text-sm text-zinc-400">Loading…</p>}
           {trends && points.length === 0 && (
-            <p className="text-xs text-zinc-500">
+            <p className="text-sm text-zinc-400">
               No decisions recorded in this window yet - run a few from the Live Decision Console first.
             </p>
           )}
           {points.length > 0 && (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
+                <span className="text-[11px] tracking-wide text-zinc-400 uppercase">
                   Approval rate · {(approvalRates[approvalRates.length - 1] * 100).toFixed(1)}%
                 </span>
                 <Sparkline values={approvalRates} dates={dayLabels} colorClassName="text-neon" />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
+                <span className="text-[11px] tracking-wide text-zinc-400 uppercase">
                   False-decline rate (labeled txns only)
                   {falsePositiveRates.length > 0 && ` · ${(falsePositiveRates[falsePositiveRates.length - 1] * 100).toFixed(1)}%`}
                 </span>
                 <Sparkline values={falsePositiveRates} dates={falsePositiveDays} colorClassName="text-amber-400" />
               </div>
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
+                <span className="text-[11px] tracking-wide text-zinc-400 uppercase">
                   Realized fraud loss (allowed + confirmed fraud)
                 </span>
                 <Sparkline values={fraudLosses} dates={dayLabels} colorClassName="text-rose-400" />
@@ -128,7 +131,7 @@ export default function AuditMonitoring() {
             </div>
           )}
           {points.length > 0 && (
-            <p className="text-[11px] text-zinc-600">
+            <p className="text-sm text-zinc-400">
               {totalDecisions} decision(s) across {points.length} day(s) with activity. False-decline rate and
               fraud loss are only meaningful over labeled transactions (synthetic/IEEE-CIS) - live events with no
               ground truth are excluded rather than counted as legitimate.
@@ -138,7 +141,9 @@ export default function AuditMonitoring() {
 
         <Panel title="Decision trace lookup · GET /audit/{transaction_id}">
           <Field label="Transaction ID" hint="Paste one from the Live Decision Console's synthetic-transaction output.">
-            <div className="flex gap-2">
+            {/* Stacks below ~400px so the button never has to squeeze -
+                a primary CTA wrapping its own label mid-word looks broken. */}
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={transactionId}
                 onChange={(e) => setTransactionId(e.target.value)}
@@ -155,11 +160,11 @@ export default function AuditMonitoring() {
               </button>
             </div>
           </Field>
-          {traceError && <p className="text-xs text-rose-400">{traceError}</p>}
+          {traceError && <p className="text-sm text-rose-400">{traceError}</p>}
 
           {recentLookups.length > 0 && !trace && (
-            <div className="flex flex-col gap-2 border-t border-zinc-800 pt-3">
-              <span className="flex items-center gap-1.5 text-[11px] tracking-wide text-zinc-500 uppercase">
+            <div className="flex flex-col gap-2 border-t border-zinc-800 pt-4">
+              <span className="flex items-center gap-1.5 text-[11px] tracking-wide text-zinc-400 uppercase">
                 <History size={12} /> Recent lookups
               </span>
               <div className="flex flex-wrap gap-2">
@@ -167,7 +172,7 @@ export default function AuditMonitoring() {
                   <button
                     key={id}
                     onClick={() => handleLookup(id)}
-                    className="border border-zinc-800 px-2 py-1 font-mono text-[11px] text-zinc-400 hover:border-neon hover:text-neon"
+                    className="border border-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-300 hover:border-neon hover:text-neon"
                   >
                     {id}
                   </button>
@@ -177,57 +182,51 @@ export default function AuditMonitoring() {
           )}
 
           {!trace && !traceLoading && !traceError && recentLookups.length === 0 && (
-            <div className="flex flex-col items-center gap-2 border-t border-zinc-800 py-8 text-zinc-600">
+            <div className="flex flex-col items-center gap-2 border-t border-zinc-800 py-8 text-zinc-400">
               <SearchX size={20} />
-              <p className="text-xs">No transaction looked up yet - paste an id above.</p>
+              <p className="text-sm">No transaction looked up yet - paste an id above.</p>
             </div>
           )}
 
           {trace && (
-            <div className="flex flex-col gap-4 border-t border-zinc-800 pt-3">
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs sm:grid-cols-4">
-                <dt className="text-zinc-500">data_source</dt>
+            <div className="flex flex-col gap-4 border-t border-zinc-800 pt-4">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-xs sm:grid-cols-4">
+                <dt className="text-zinc-400">data_source</dt>
                 <dd className="text-zinc-200">{trace.transaction.data_source}</dd>
-                <dt className="text-zinc-500">amount</dt>
+                <dt className="text-zinc-400">amount</dt>
                 <dd className="text-zinc-200">{formatCurrency(trace.transaction.amount)}</dd>
-                <dt className="text-zinc-500">merchant_category</dt>
+                <dt className="text-zinc-400">merchant_category</dt>
                 <dd className="text-zinc-200">{trace.transaction.merchant_category}</dd>
-                <dt className="text-zinc-500">ground truth</dt>
-                <dd className={trace.transaction.is_fraud ? "text-rose-400" : "text-emerald-400"}>
+                <dt className="text-zinc-400">ground truth</dt>
+                <dd
+                  className={
+                    trace.transaction.is_fraud === null
+                      ? "text-zinc-400"
+                      : trace.transaction.is_fraud
+                        ? "text-rose-400"
+                        : "text-emerald-400"
+                  }
+                >
                   {trace.transaction.is_fraud === null ? "unlabeled" : trace.transaction.is_fraud ? "fraud" : "legitimate"}
                 </dd>
               </dl>
 
               <div className="flex flex-col gap-3">
-                <span className="text-[11px] tracking-wide text-zinc-500 uppercase">
+                <span className="text-[11px] tracking-wide text-zinc-400 uppercase">
                   {trace.decisions.length} decision{trace.decisions.length === 1 ? "" : "s"} (chronological)
                 </span>
                 {trace.decisions.map((d) => (
-                  <div key={d.id} className="flex flex-col gap-2 border border-zinc-800 p-3">
+                  <div key={d.id} className="flex flex-col gap-3 border border-zinc-800 p-4">
                     <div className="flex flex-wrap items-center gap-3">
                       <span className={`border px-2 py-0.5 font-mono text-xs font-semibold tracking-wide ${STATUS_COLORS[d.action]}`}>
                         {d.action}
                       </span>
-                      <span className="font-mono text-[11px] text-zinc-500">
+                      <span className="font-mono text-xs text-zinc-400">
                         {new Date(d.decided_at).toLocaleString()} · p={d.probability_used}
                       </span>
                     </div>
-                    <table className="w-full font-mono text-xs">
-                      <tbody>
-                        {(Object.keys(d.expected_costs) as Action[]).map((action) => (
-                          <tr key={action} className="border-t border-zinc-900">
-                            <td className={`py-1 pr-2 ${action === d.action ? "text-zinc-100" : "text-zinc-500"}`}>
-                              {action}
-                              {action === d.action && " ←"}
-                            </td>
-                            <td className="py-1 text-right text-zinc-200 tabular-nums">
-                              {formatCurrency(d.expected_costs[action])}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-500 sm:grid-cols-3">
+                    <CostBars costs={d.expected_costs} chosen={d.action} />
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs text-zinc-400 sm:grid-cols-3">
                       <span>model: {d.model_version ?? "—"}</span>
                       <span>calibration: {d.calibration_version ?? "—"}</span>
                       <span>segment_def: {d.segment_definition_version}</span>
@@ -235,7 +234,7 @@ export default function AuditMonitoring() {
                       <span>cost_matrix: {d.cost_matrix_version}</span>
                       <span>cost_profile: {d.cost_profile_source}</span>
                     </div>
-                    <ul className="flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
+                    <ul className="flex flex-col gap-1 font-mono text-xs text-zinc-400">
                       {d.reason_codes.map((code, i) => (
                         <li key={i}>· {code}</li>
                       ))}
@@ -246,6 +245,8 @@ export default function AuditMonitoring() {
             </div>
           )}
         </Panel>
+
+        <NextStepCTA afterHref="/console" label="Decide: try another transaction" />
       </main>
     </div>
   );

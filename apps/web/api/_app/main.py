@@ -17,9 +17,11 @@ from fastapi import FastAPI, HTTPException
 load_dotenv(Path(__file__).resolve().parents[2] / ".env.local")
 
 from . import db
+from .rate_limit import RateLimitMiddleware
 from .routers.audit import router as audit_router
 from .routers.decisions import router as decisions_router
 from .routers.policies import router as policies_router
+from .routers.razorpay import router as razorpay_router
 from .routers.review_allocation import router as review_allocation_router
 from .routers.simulation import router as simulation_router
 from .routers.transactions import router as transactions_router
@@ -52,12 +54,14 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="RiskPilot API", lifespan=lifespan)
+app.add_middleware(RateLimitMiddleware)
 app.include_router(transactions_router)
 app.include_router(decisions_router)
 app.include_router(review_allocation_router)
 app.include_router(audit_router)
 app.include_router(simulation_router)
 app.include_router(policies_router)
+app.include_router(razorpay_router)
 
 
 @app.get("/health")

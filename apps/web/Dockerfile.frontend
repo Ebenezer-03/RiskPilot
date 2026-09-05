@@ -1,0 +1,22 @@
+# Next.js frontend (ticket 15's Docker Compose target). Runs `next dev`
+# rather than a `next build && next start` production bundle - this
+# container's job is a reviewer-runnable local environment (this ticket's
+# acceptance criterion), and next.config.ts's /api/* rewrite only exists
+# outside Vercel's own platform, so dev mode here is the simplest way to
+# get identical behavior to a bare `npm run dev` rather than adding a
+# second, Docker-only production code path to keep in sync.
+FROM node:24-slim
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+# Overridden in docker-compose.yml to the backend service's hostname -
+# `next.config.ts`'s default (127.0.0.1:8000) assumes both processes share
+# one host network, which two separate containers don't.
+ENV BACKEND_URL=http://backend:8000
+
+EXPOSE 3000
+CMD ["npm", "run", "dev"]

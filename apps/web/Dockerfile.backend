@@ -1,0 +1,24 @@
+# FastAPI backend (ticket 15's Docker Compose target). Mirrors the local
+# dev invocation in README.md exactly (`cd api && uvicorn index:app`) so
+# there's one documented way to run this app, not a Docker-specific
+# variant that could silently drift from it.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System deps for lightgbm's runtime (libgomp) - psycopg[binary] ships its
+# own wheels, no libpq-dev needed.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api ./api
+
+WORKDIR /app/api
+EXPOSE 8000
+
+# No --reload here (that's local-dev-only, in the README's uvicorn command)
+# - a container restart is the equivalent for a compose-based environment.
+CMD ["uvicorn", "index:app", "--host", "0.0.0.0", "--port", "8000"]
