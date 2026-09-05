@@ -19,10 +19,12 @@ per-function limit.
 
 from __future__ import annotations
 
-import ctypes
 import glob
 import logging
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -37,16 +39,32 @@ def _preload_bundled_libgomp() -> None:
     manylinux wheel dynamically links against it without bundling it (a
     known upstream packaging gap - microsoft/LightGBM#4484) - importing
     lightgbm there fails with `OSError: libgomp.so.1: cannot open shared
-    object file`. numpy/scipy/scikit-learn's own manylinux wheels vendor a
-    private copy of libgomp (they need OpenMP too, typically under a
-    `<pkg>.libs/` sibling directory) - loading any one of those into the
-    process first (RTLD_GLOBAL) satisfies lightgbm's own dlopen of the same
-    soname, since the dynamic linker resolves an already-loaded soname
-    instead of searching the filesystem again. Searches every sys.path
-    entry (not just site-packages' own default location) since Vercel's
-    "optimizing dependencies" step for large functions can relocate
-    installed packages outside the usual purelib path. A genuine no-op on
-    Windows/macOS (the glob simply won't match anything there)."""
+    object file`.
+
+    numpy/scipy/scikit-learn's own manylinux wheels vendor a private copy
+    of libgomp too (under a `<pkg>.libs/` sibling directory) - but
+    auditwheel renames vendored copies with a hash suffix (e.g.
+    `libgomp-a34b3233.so.1.0.0`) and patches their internal ELF soname to
+    match that new name specifically to prevent collisions between
+    packages' own bundled copies. That means simply dlopen-ing the vendored
+    file (e.g. via ctypes.CDLL) registers it under its *hashed* soname, not
+    "libgomp.so.1" - it does NOT satisfy lightgbm's own dependency on that
+    literal soname (confirmed empirically against a real deployment: the
+    vendored copy loaded successfully, but lightgbm's own import still
+    failed with the exact same error).
+
+    What actually resolves lightgbm's dlopen: copy the vendored file to a
+    writable directory *renamed to the literal soname* `libgomp.so.1`, and
+    put that directory on LD_LIBRARY_PATH before lightgbm is imported - the
+    dynamic linker's directory search matches by filename, unlike the
+    already-loaded-object search (which matches by each object's own
+    recorded soname). Mutating os.environ here (not just os.putenv)
+    updates the process's real environment via libc setenv(), which
+    dlopen()'s runtime path search reads at call time, not only at
+    process start.
+
+    A genuine no-op on Windows/macOS (the glob simply won't match
+    anything there)."""
     candidates: list[str] = []
     for root in sys.path:
         if not root:
@@ -57,14 +75,13 @@ def _preload_bundled_libgomp() -> None:
         _logger.warning("libgomp preload: no bundled libgomp*.so* found under any sys.path entry.")
         return
 
-    for candidate in candidates:
-        try:
-            ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
-            _logger.info("libgomp preload: loaded %s", candidate)
-            return
-        except OSError as exc:
-            _logger.warning("libgomp preload: failed to load %s (%s)", candidate, exc)
-            continue
+    compat_dir = Path(tempfile.gettempdir()) / "riskpilot_libgomp_compat"
+    compat_dir.mkdir(exist_ok=True)
+    target = compat_dir / "libgomp.so.1"
+    if not target.exists():
+        shutil.copy2(candidates[0], target)
+    os.environ["LD_LIBRARY_PATH"] = f"{compat_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+    _logger.info("libgomp preload: staged %s as %s and added it to LD_LIBRARY_PATH", candidates[0], target)
 
 
 _preload_bundled_libgomp()
