@@ -6,7 +6,7 @@ values but unreachable through this router - see db.py's schema comment.
 from __future__ import annotations
 
 import random
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import psycopg
 from fastapi import APIRouter, HTTPException
@@ -313,6 +313,20 @@ async def canary_policy(policy_id: str, payload: PolicyCanaryRequest) -> PolicyP
 
         thresholds = GuardrailThresholds(
             **{field: value for field, value in payload.thresholds.model_dump().items() if value is not None}
+        )
+        # sample_size_floor compares each segment's *absolute* transaction
+        # count against min_segment_sample_size - a fine comparison against
+        # a full-window replay, but this is only a _CANARY_TRAFFIC_FRACTION
+        # subsample of that same window. Left unscaled, a segment sized to
+        # comfortably clear the floor at full volume almost always falls
+        # under it in a 5% slice, so every default-threshold canary would
+        # spuriously fail this guardrail regardless of how safe the
+        # candidate actually is. Scale the floor down by the same fraction
+        # the traffic itself was sampled by, so the check stays meaningful
+        # at canary volume instead of just being unreachable.
+        thresholds = replace(
+            thresholds,
+            min_segment_sample_size=max(1, round(thresholds.min_segment_sample_size * _CANARY_TRAFFIC_FRACTION)),
         )
         violations = evaluate_guardrails(
             canary_result, candidate_review_capacity=row["review_capacity"], thresholds=thresholds
