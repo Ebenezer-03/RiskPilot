@@ -89,7 +89,12 @@ SELECT
     count(*) AS total_decisions,
     count(*) FILTER (WHERE d.action = 'ALLOW') AS allow_count,
     count(*) FILTER (WHERE d.action = 'BLOCK' AND t.is_fraud = false) AS false_positive_count,
-    count(*) FILTER (WHERE t.is_fraud IS NOT NULL) AS labeled_count,
+    -- False Positive Rate's denominator is legitimate transactions
+    -- (FP + TN), not every labeled transaction (FP + TN + TP + FN) -
+    -- guardrails.py's own _false_positive_rate already uses this same
+    -- legitimate-only denominator; dividing by labeled_count instead would
+    -- under-report the true FPR whenever fraud prevalence is non-trivial.
+    count(*) FILTER (WHERE t.is_fraud = false) AS legitimate_count,
     coalesce(sum(t.amount) FILTER (WHERE d.action = 'ALLOW' AND t.is_fraud = true), 0) AS fraud_loss
 FROM decisions d
 JOIN transactions t ON t.transaction_id = d.transaction_id

@@ -28,7 +28,9 @@ async def get_audit_trends(days: int = Query(default=30, ge=1, le=365)) -> Audit
             day=row["day"],
             total_decisions=row["total_decisions"],
             approval_rate=row["allow_count"] / row["total_decisions"] if row["total_decisions"] else 0.0,
-            false_positive_rate=(row["false_positive_count"] / row["labeled_count"]) if row["labeled_count"] else None,
+            false_positive_rate=(row["false_positive_count"] / row["legitimate_count"])
+            if row["legitimate_count"]
+            else None,
             fraud_loss=row["fraud_loss"],
         )
         for row in rows
