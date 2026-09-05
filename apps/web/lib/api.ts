@@ -255,6 +255,11 @@ export interface PolicyRecord {
   updated_at: string;
   simulated_at: string | null;
   activated_at: string | null;
+  // Ticket 16 (stretch): CANARY's own 95/5-subsample replay (separate from
+  // replay_result, the full-window replay from /simulate), and whichever
+  // policy this one superseded on activation, for /rollback to revert to.
+  canary_replay_result: ReplayResult | null;
+  superseded_policy_id: string | null;
 }
 
 export interface PolicyWritePayload {
@@ -324,6 +329,33 @@ export function promotePolicy(
     method: "POST",
     body: JSON.stringify({ thresholds }),
   });
+}
+
+// Ticket 16 (stretch): SIMULATED -> CANARY, an optional staging step before
+// /promote's SIMULATED|CANARY -> ACTIVE - a 95/5 historical-traffic
+// subsample exposure, evaluated by the exact same guardrails as a direct
+// promotion.
+export function canaryPolicy(
+  policyId: string,
+  options: { window?: ReplayWindow; thresholds?: GuardrailThresholds } = {},
+): Promise<PolicyPromotionResult> {
+  return request(`/policies/${encodeURIComponent(policyId)}/canary`, {
+    method: "POST",
+    body: JSON.stringify({ window: options.window ?? {}, thresholds: options.thresholds ?? {} }),
+  });
+}
+
+export interface PolicyRollbackResult {
+  policy: PolicyRecord;
+  // Whichever policy this one superseded on activation, reactivated as a
+  // result - or null if this was the first-ever activated policy.
+  reactivated_policy: PolicyRecord | null;
+}
+
+// Ticket 16 (stretch): ACTIVE/CANARY -> ROLLED_BACK, reverting the
+// active-policy pointer to whichever policy this one superseded.
+export function rollbackPolicy(policyId: string): Promise<PolicyRollbackResult> {
+  return request(`/policies/${encodeURIComponent(policyId)}/rollback`, { method: "POST" });
 }
 
 // --- Audit & Monitoring (ticket 12) -----------------------------------------------
