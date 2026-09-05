@@ -19,10 +19,9 @@ per-function limit.
 
 from __future__ import annotations
 
+import ctypes
 import glob
 import logging
-import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -31,6 +30,8 @@ from typing import Any
 import joblib
 
 _logger = logging.getLogger(__name__)
+
+_REAL_LIBGOMP_SONAME = b"libgomp.so.1\x00"
 
 
 def _preload_bundled_libgomp() -> None:
@@ -42,29 +43,37 @@ def _preload_bundled_libgomp() -> None:
     object file`.
 
     numpy/scipy/scikit-learn's own manylinux wheels vendor a private copy
-    of libgomp too (under a `<pkg>.libs/` sibling directory) - but
-    auditwheel renames vendored copies with a hash suffix (e.g.
-    `libgomp-a34b3233.so.1.0.0`) and patches their internal ELF soname to
-    match that new name specifically to prevent collisions between
-    packages' own bundled copies. That means simply dlopen-ing the vendored
-    file (e.g. via ctypes.CDLL) registers it under its *hashed* soname, not
-    "libgomp.so.1" - it does NOT satisfy lightgbm's own dependency on that
-    literal soname (confirmed empirically against a real deployment: the
-    vendored copy loaded successfully, but lightgbm's own import still
-    failed with the exact same error).
+    of libgomp too (under a `<pkg>.libs/` sibling directory), but two
+    approaches that both sound like they should reuse it were tried and
+    empirically failed against a real deployment:
 
-    What actually resolves lightgbm's dlopen: copy the vendored file to a
-    writable directory *renamed to the literal soname* `libgomp.so.1`, and
-    put that directory on LD_LIBRARY_PATH before lightgbm is imported - the
-    dynamic linker's directory search matches by filename, unlike the
-    already-loaded-object search (which matches by each object's own
-    recorded soname). Mutating os.environ here (not just os.putenv)
-    updates the process's real environment via libc setenv(), which
-    dlopen()'s runtime path search reads at call time, not only at
-    process start.
+    1. ctypes.CDLL-loading the vendored file directly (RTLD_GLOBAL) - it
+       loads fine, but doesn't help. auditwheel renames vendored copies
+       with a hash suffix (e.g. `libgomp-a34b3233.so.1.0.0`) *and patches
+       their ELF DT_SONAME to match that new name*, specifically so two
+       packages' own bundled copies never collide. The loaded object
+       therefore registers under its hashed soname, not "libgomp.so.1" -
+       it can't satisfy lightgbm's dependency on that literal name.
+    2. Copying the vendored file to a writable dir renamed to
+       `libgomp.so.1` and adding that dir to LD_LIBRARY_PATH (mutating
+       os.environ, which does update the process's real environment) -
+       still didn't help. The renamed *file* doesn't carry a renamed
+       *soname*; the underlying dynamic linker in this runtime evidently
+       isn't re-resolving lightgbm's dlopen against a directory search
+       here either.
 
-    A genuine no-op on Windows/macOS (the glob simply won't match
-    anything there)."""
+    What actually works: patch the copy's own DT_SONAME string in place to
+    the literal bytes "libgomp.so.1\\0", then ctypes.CDLL it directly by
+    path with RTLD_GLOBAL. auditwheel's hashed soname is stored as a plain
+    null-terminated string in the .dynstr section - overwriting those exact
+    bytes with a *same-length-or-shorter*, null-padded replacement doesn't
+    move any other byte offset in the file, so nothing else in the ELF
+    needs re-parsing or re-linking. Once genuinely loaded under the soname
+    "libgomp.so.1", lightgbm's own dlopen finds it via the already-loaded-
+    object check before ever touching the filesystem.
+
+    A genuine no-op on Windows/macOS (the glob simply won't match anything
+    there)."""
     candidates: list[str] = []
     for root in sys.path:
         if not root:
@@ -75,13 +84,26 @@ def _preload_bundled_libgomp() -> None:
         _logger.warning("libgomp preload: no bundled libgomp*.so* found under any sys.path entry.")
         return
 
-    compat_dir = Path(tempfile.gettempdir()) / "riskpilot_libgomp_compat"
-    compat_dir.mkdir(exist_ok=True)
-    target = compat_dir / "libgomp.so.1"
-    if not target.exists():
-        shutil.copy2(candidates[0], target)
-    os.environ["LD_LIBRARY_PATH"] = f"{compat_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
-    _logger.info("libgomp preload: staged %s as %s and added it to LD_LIBRARY_PATH", candidates[0], target)
+    source = candidates[0]
+    data = bytearray(Path(source).read_bytes())
+    own_soname = (Path(source).name + "\x00").encode()
+    offset = data.find(own_soname)
+    if offset == -1 or len(_REAL_LIBGOMP_SONAME) > len(own_soname):
+        _logger.warning("libgomp preload: could not locate a patchable soname string in %s.", source)
+        return
+
+    patched = _REAL_LIBGOMP_SONAME.ljust(len(own_soname), b"\x00")
+    data[offset : offset + len(own_soname)] = patched
+
+    patched_path = Path(tempfile.gettempdir()) / "riskpilot_libgomp_compat" / "libgomp.so.1"
+    patched_path.parent.mkdir(exist_ok=True)
+    patched_path.write_bytes(bytes(data))
+
+    try:
+        ctypes.CDLL(str(patched_path), mode=ctypes.RTLD_GLOBAL)
+        _logger.info("libgomp preload: patched soname in %s and loaded %s", source, patched_path)
+    except OSError as exc:
+        _logger.warning("libgomp preload: patched copy at %s still failed to load (%s)", patched_path, exc)
 
 
 _preload_bundled_libgomp()
