@@ -121,11 +121,23 @@ def _catch_probability(action: Action, cost_profile: CostProfile) -> float:
     }[action]
 
 
-def run_policy(transactions: list[ReplayTransaction], policy: Policy) -> PolicyReplayResult:
+def run_policy(transactions: list[ReplayTransaction], policy: Policy, *, window_days: int = 1) -> PolicyReplayResult:
     """Decides every transaction under `policy` (same cost engine + review
     allocator as the live /decide and /review/allocate endpoints), then
     aggregates realized outcomes against each transaction's ground-truth
     `is_fraud` label - in aggregate and broken down by segment.
+
+    `window_days` scales `policy.review_capacity` (a *daily* cap - see
+    policy.py) up to the *window-total* capacity the allocator should
+    actually compete for: a 30-day replay has 30 days' worth of review
+    capacity to spend, not one day's. Without this, a multi-day replay
+    would apply a single day's cap across the whole window, downgrading
+    the vast majority of otherwise-review-eligible transactions to ALLOW
+    or BLOCK and badly distorting the simulated approval rate, false
+    decline count, and net expected loss - guardrails.py already
+    normalizes the other direction (window-total count / window_days) when
+    comparing against this same daily cap, so replay's own allocation needs
+    the matching scale-up to stay consistent with it.
     """
     decided: list[tuple[ReplayTransaction, Action, dict[Action, float], CostProfile]] = []
     for txn in transactions:
@@ -144,8 +156,9 @@ def run_policy(transactions: list[ReplayTransaction], policy: Policy) -> PolicyR
         for txn, action, expected_costs, _ in decided
         if action == "REVIEW"
     ]
+    window_review_capacity = policy.review_capacity * window_days
     allocation_by_id = {
-        result.transaction_id: result for result in allocate_reviews(review_candidates, policy.review_capacity)
+        result.transaction_id: result for result in allocate_reviews(review_candidates, window_review_capacity)
     }
 
     aggregate = dict(vars(_EMPTY_METRICS))
@@ -233,8 +246,9 @@ def run_replay(
     if not transactions:
         raise ValueError("transactions must be non-empty - nothing to replay.")
 
-    baseline_result = run_policy(transactions, baseline_policy)
-    candidate_result = run_policy(transactions, candidate_policy)
+    window_days = compute_window_days(transactions)
+    baseline_result = run_policy(transactions, baseline_policy, window_days=window_days)
+    candidate_result = run_policy(transactions, candidate_policy, window_days=window_days)
 
     segments = set(baseline_result.by_segment) | set(candidate_result.by_segment)
     by_segment = {
@@ -260,5 +274,5 @@ def run_replay(
         ),
         by_segment=by_segment,
         calibration_brier_score=compute_calibration_brier_score(transactions),
-        window_days=compute_window_days(transactions),
+        window_days=window_days,
     )
