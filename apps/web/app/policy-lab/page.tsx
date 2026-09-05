@@ -150,7 +150,15 @@ export default function PolicyLab() {
   const [policiesError, setPoliciesError] = useState<string | null>(null);
   const [baselinePolicyId, setBaselinePolicyId] = useState<string>("");
 
-  const [policyId, setPolicyId] = useState(newPolicyId());
+  // Empty on first render (server and client both render "") - newPolicyId()
+  // embeds a timestamp, so calling it during useState's initializer runs it
+  // once during SSR and again during client hydration a few ms apart,
+  // producing two different ids and a React hydration mismatch. Filling it
+  // in from an effect (client-only, post-hydration) avoids that.
+  const [policyId, setPolicyId] = useState("");
+  useEffect(() => {
+    setPolicyId(newPolicyId());
+  }, []);
   const [name, setName] = useState("Candidate policy");
   const [reviewCapacity, setReviewCapacity] = useState(String(DEFAULT_REVIEW_CAPACITY));
   const [advancedMode, setAdvancedMode] = useState(false);
