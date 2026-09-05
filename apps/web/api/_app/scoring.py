@@ -6,6 +6,15 @@ Deliberately does not import api._app.ml.train (training-only, pulls in
 pandas-heavy offline tooling and is not meant to run inside the deployed
 function - training is offline-only per the spec). This module only reads
 the artifacts train.py already produced.
+
+Reason codes are computed via LightGBM's own native `pred_contrib=True`
+(booster.predict), not the external `shap` package - it runs the same
+TreeSHAP algorithm shap.TreeExplainer would (LightGBM implements it
+in-tree), with zero extra dependencies. This matters concretely on Vercel:
+shap's own declared dependencies always pull in numba+llvmlite (~150MB)
+for accelerating explainer types this app doesn't even use, and that was
+enough on its own to push the deployed function bundle over Vercel's 500MB
+per-function limit.
 """
 
 from __future__ import annotations
@@ -16,7 +25,6 @@ from typing import Any
 import joblib
 import lightgbm as lgb
 import pandas as pd
-import shap
 
 from .ml.features import (
     ALL_FEATURE_COLUMNS,
@@ -84,7 +92,6 @@ class ScoringService:
             )
         self.booster = lgb.Booster(model_file=str(model_path))
         self.calibrator = joblib.load(calibrator_path)
-        self.explainer = shap.TreeExplainer(self.booster)
         self.model_version = MODEL_VERSION
         self.calibration_version = CALIBRATION_VERSION
         self.feature_schema_version = FEATURE_SCHEMA_VERSION
@@ -130,25 +137,13 @@ class ScoringService:
         }
 
     def _reason_codes(self, row: pd.DataFrame, top_n: int = 3) -> list[str]:
-        shap_values = self.explainer.shap_values(row)
-        # Explaining self.booster directly (a raw LightGBM Booster, not an
-        # sklearn-wrapped two-class classifier) makes TreeExplainer return
-        # one array of shape (1, n_features) - contributions to the single
-        # margin output, which *is* the fraud-class direction - not the
-        # [class_0_values, class_1_values] list some SHAP versions return
-        # for a wrapped binary classifier (confirmed empirically against
-        # this module's pinned lightgbm/shap versions: shap_values here is
-        # always a plain ndarray, never a list, despite the "output has
-        # changed to a list of ndarray" UserWarning SHAP prints regardless -
-        # that warning fires for the wrapped-classifier code path this
-        # module doesn't take). Handled defensively anyway in case a future
-        # SHAP upgrade changes that for the raw-booster path too - a list
-        # here would otherwise silently score fraud-suppressing (class 0)
-        # contributions as if they were fraud-driving ones.
-        if isinstance(shap_values, list):
-            values = shap_values[-1][0]  # last element is the positive (fraud) class
-        else:
-            values = shap_values[0] if hasattr(shap_values, "__len__") else shap_values
+        # LightGBM's own pred_contrib=True runs the exact TreeSHAP algorithm
+        # in-tree - one row of per-feature contributions to the model's raw
+        # margin output (the fraud-class direction), plus one trailing bias
+        # (expected-value) term that isn't a feature contribution at all and
+        # must be dropped before zipping against ALL_FEATURE_COLUMNS.
+        contribs = self.booster.predict(row, pred_contrib=True)[0]
+        values = contribs[:-1]
         contributions = list(zip(ALL_FEATURE_COLUMNS, values))
         contributions.sort(key=lambda pair: abs(pair[1]), reverse=True)
 

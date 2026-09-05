@@ -4,10 +4,13 @@ pydantic==2.10.4
 psycopg[binary]==3.2.3
 python-dotenv==1.0.1
 
-# Scoring-time ML deps (loaded by the /score endpoint - ticket 03)
+# Scoring-time ML deps (loaded by the /score endpoint - ticket 03). Reason
+# codes use LightGBM's own native pred_contrib=True (real TreeSHAP, no
+# external `shap` package) - shap's own dependencies pull in numba+llvmlite
+# (~150MB) purely for accelerating explainer types this app never uses,
+# which alone pushed the deployed function bundle over Vercel's 500MB cap.
 lightgbm==4.5.0
 scikit-learn==1.6.0
-shap==0.46.0
 numpy==2.2.1
 joblib==1.4.2
 pandas==2.2.3
