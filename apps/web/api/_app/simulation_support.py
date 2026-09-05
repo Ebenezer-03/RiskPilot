@@ -43,11 +43,14 @@ def probability_for_record(record: dict[str, Any]) -> float | None:
 
     try:
         service = get_scoring_service()
-        result = service.score(record.get("raw_features") or {})
+        # predict_probability, not score() - a replay only ever reads the
+        # probability (see below), never score()'s reason codes, and those
+        # cost a TreeSHAP pass per row - the dominant cost of a replay over
+        # hundreds/thousands of rows for a value nothing here reads.
+        return service.predict_probability(record.get("raw_features") or {})
     except Exception:  # noqa: BLE001 - any artifact/scoring failure just skips this row,
         # tallied as transactions_skipped rather than failing the whole replay.
         return None
-    return result["fraud_probability_calibrated"]
 
 
 def policy_from_request(cost_assumptions: CostAssumptionsRequest, review_capacity: int) -> Policy:

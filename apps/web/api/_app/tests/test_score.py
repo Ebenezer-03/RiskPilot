@@ -91,3 +91,21 @@ def test_score_with_no_features_does_not_crash():
     assert response.status_code == 200
     body = response.json()
     assert 0.0 <= body["fraud_probability_calibrated"] <= 1.0
+
+
+def test_predict_probability_matches_scores_calibrated_probability():
+    """predict_probability is score()'s TreeSHAP-free fast path (used by
+    replay/simulation, which never reads reason codes) - it must produce
+    the exact same calibrated probability score() does, just without the
+    reason-code computation alongside it."""
+    from _app.scoring import get_scoring_service
+
+    service = get_scoring_service()
+    fixture = _load_fixture("fraud_example")
+
+    full = service.score(fixture["features"])
+    fast_path = service.predict_probability(fixture["features"])
+
+    # score()'s calibrated probability is rounded to 4dp for the API
+    # response; predict_probability returns it unrounded.
+    assert fast_path == pytest.approx(full["fraud_probability_calibrated"], abs=1e-4)

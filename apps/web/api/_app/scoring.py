@@ -100,6 +100,18 @@ class ScoringService:
         df[NUMERIC_COLUMNS] = df[NUMERIC_COLUMNS].apply(pd.to_numeric, errors="coerce")
         return coerce_categorical_dtypes(df)
 
+    def predict_probability(self, features: dict[str, Any]) -> float:
+        """The calibrated probability alone, skipping TreeSHAP entirely -
+        for callers (replay/simulation) that score hundreds or thousands of
+        historical rows and only ever use the probability, never the
+        per-row reason codes `score()` also computes. TreeSHAP is by far
+        the most expensive part of `score()`; running it on every replayed
+        row turns a simulation from milliseconds into minutes for no
+        benefit, since the reason codes are discarded unread."""
+        row = self._build_row(features)
+        raw_prob = float(self.booster.predict(row)[0])
+        return float(self.calibrator.predict([raw_prob])[0])
+
     def score(self, features: dict[str, Any]) -> dict[str, Any]:
         row = self._build_row(features)
 
