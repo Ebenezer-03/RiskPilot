@@ -36,8 +36,15 @@ def _create_policy(*, name: str, cost_assumptions: dict | None = None, review_ca
 
 
 def _seed_synthetic_transactions(count: int = 200) -> None:
-    response = client.post("/transactions/synthetic", json={"count": count})
-    assert response.status_code == 200, response.text
+    # /transactions/synthetic caps a single request at 100 - chunk larger
+    # requests across multiple calls rather than raising the API's own limit
+    # just to suit this test.
+    remaining = count
+    while remaining > 0:
+        batch = min(remaining, 100)
+        response = client.post("/transactions/synthetic", json={"count": batch})
+        assert response.status_code == 200, response.text
+        remaining -= batch
 
 
 # Relaxed enough that a small 95/5 canary subsample of a modest window
@@ -159,3 +166,43 @@ def test_cannot_rollback_a_draft_or_simulated_policy():
     draft = _create_policy(name="rollback-needs-active")
     response = client.post(f"/policies/{draft['policy_id']}/rollback")
     assert response.status_code == 409
+
+
+def test_cannot_rollback_a_stale_superseded_active_policy():
+    """transition_to_active never demotes the row it supersedes (more than
+    one row can carry status='ACTIVE' over the system's lifetime - see
+    policy_registry.py's own docstring), so promoting A then B leaves A's
+    DB status literally 'ACTIVE' even though B is the one actually
+    governing /decide. Rolling back A directly (not through B) must be
+    rejected, not silently succeed with no real effect."""
+    _skip_without_db()
+    _seed_synthetic_transactions(200)
+
+    baseline = _create_policy(name="stale-rollback-baseline")
+
+    policy_a = _create_policy(name="stale-rollback-a")
+    _simulate(policy_a["policy_id"], baseline["policy_id"])
+    promote_a = client.post(f"/policies/{policy_a['policy_id']}/promote", json={"thresholds": _RELAXED_THRESHOLDS})
+    assert promote_a.status_code == 200, promote_a.text
+
+    policy_b = _create_policy(name="stale-rollback-b")
+    _simulate(policy_b["policy_id"], baseline["policy_id"])
+    promote_b = client.post(f"/policies/{policy_b['policy_id']}/promote", json={"thresholds": _RELAXED_THRESHOLDS})
+    assert promote_b.status_code == 200, promote_b.text
+    assert promote_b.json()["policy"]["superseded_policy_id"] == policy_a["policy_id"]
+
+    # A's own status column is still 'ACTIVE' - confirm the naive read would
+    # be misleading before asserting the endpoint doesn't fall for it.
+    assert client.get(f"/policies/{policy_a['policy_id']}").json()["status"] == "ACTIVE"
+
+    stale_rollback = client.post(f"/policies/{policy_a['policy_id']}/rollback")
+    assert stale_rollback.status_code == 409, stale_rollback.text
+
+    # B is untouched and still the real current-active policy.
+    assert client.get(f"/policies/{policy_b['policy_id']}").json()["status"] == "ACTIVE"
+
+    # Rolling back B (the real current-active policy) still works and
+    # correctly reactivates A.
+    rollback_b = client.post(f"/policies/{policy_b['policy_id']}/rollback")
+    assert rollback_b.status_code == 200, rollback_b.text
+    assert rollback_b.json()["reactivated_policy"]["policy_id"] == policy_a["policy_id"]

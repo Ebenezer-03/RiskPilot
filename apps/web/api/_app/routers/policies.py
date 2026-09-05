@@ -280,10 +280,18 @@ async def canary_policy(policy_id: str, payload: PolicyCanaryRequest) -> PolicyP
                 status_code=409, detail=f"policy {policy_id!r} is {row['status']}, not SIMULATED - cannot canary"
             )
 
-        baseline_row = _get_or_404(conn, row["baseline_policy_id"])
-        baseline_policy = policy_from_request(
-            CostAssumptionsRequest(**baseline_row["cost_assumptions"]), baseline_row["review_capacity"]
-        )
+        # baseline_policy_id can be the "default-day1-policy" sentinel (set by
+        # /simulate when no ACTIVE policy existed yet) rather than a real
+        # persisted row - _get_or_404 would 404 on that, unlike /promote,
+        # which never re-fetches the baseline row at all. Mirror /simulate's
+        # own three-way resolution instead of assuming it's always a real id.
+        if row["baseline_policy_id"] == "default-day1-policy":
+            baseline_policy = DEFAULT_POLICY
+        else:
+            baseline_row = _get_or_404(conn, row["baseline_policy_id"])
+            baseline_policy = policy_from_request(
+                CostAssumptionsRequest(**baseline_row["cost_assumptions"]), baseline_row["review_capacity"]
+            )
         candidate_policy = policy_from_request(CostAssumptionsRequest(**row["cost_assumptions"]), row["review_capacity"])
 
         transactions, _skipped = fetch_replay_window(conn, payload.window)
@@ -343,6 +351,21 @@ async def rollback_policy(policy_id: str) -> PolicyRollbackResponse:
             raise HTTPException(
                 status_code=409, detail=f"policy {policy_id!r} is {row['status']}, not ACTIVE/CANARY - cannot roll back"
             )
+        # transition_to_active never demotes the row it supersedes (see its
+        # own docstring - more than one row can carry status='ACTIVE' over
+        # the system's lifetime), so a status of 'ACTIVE' alone doesn't mean
+        # this row is the one actually governing live decisioning. Compare
+        # against get_current_active_policy - the same "most recently
+        # activated" notion /decide and /simulate's default baseline already
+        # use - to reject rolling back a stale, superseded ACTIVE row.
+        if row["status"] == "ACTIVE":
+            current_active = policy_registry.get_current_active_policy(conn)
+            if current_active is None or current_active["policy_id"] != policy_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"policy {policy_id!r} is ACTIVE but has been superseded - it is no longer the "
+                    "current active policy, so it cannot be rolled back",
+                )
         rolled_back, reactivated = policy_registry.transition_to_rolled_back(conn, policy_id)
         rolled_back = _or_409_lost_race(rolled_back, policy_id, "roll back")
     return PolicyRollbackResponse(

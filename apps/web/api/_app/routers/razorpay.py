@@ -15,6 +15,7 @@ Route/Payment Links-level hold-and-release primitives, out of scope here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -23,7 +24,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 
 from . import get_connection_or_503
-from .. import db
+from .. import audit, db
 from ..razorpay_client import (
     RazorpayError,
     create_order,
@@ -56,7 +57,10 @@ async def create_checkout(payload: RazorpayCheckoutRequest) -> RazorpayCheckoutR
     amount_paise = round(payload.amount * 100)
     receipt = f"riskpilot_{uuid.uuid4().hex[:12]}"
     try:
-        order = create_order(amount_paise=amount_paise, currency="INR", receipt=receipt)
+        # razorpay_client's _request is a blocking urllib call - run it off
+        # the event loop thread so a slow/hanging Razorpay API call doesn't
+        # stall every other concurrent request this worker is serving.
+        order = await asyncio.to_thread(create_order, amount_paise=amount_paise, currency="INR", receipt=receipt)
     except RazorpayError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -128,12 +132,28 @@ async def razorpay_webhook(request: Request) -> RazorpayWebhookResult:
     with conn:
         db.ensure_schema(conn)
         record = get_transaction(conn, transaction_id)
+        existing_decisions = audit.get_decisions_for_transaction(conn, transaction_id)
     if record is None:
         # The order was created outside /razorpay/checkout (e.g. directly in
         # the Razorpay Dashboard) - nothing to score against, acknowledge
         # rather than 404 so Razorpay doesn't retry indefinitely.
         return RazorpayWebhookResult(
             event=event, detail=f"No transaction row for order {order_id!r} - not created via /razorpay/checkout."
+        )
+    if existing_decisions:
+        # create_order sets payment_capture=1 (auto-capture), so Razorpay
+        # fires both payment.authorized and payment.captured for one
+        # payment - without this guard each delivery would independently
+        # decide() (a duplicate audit-trail row) and, on BLOCK, attempt a
+        # second Refunds-API call against an already-refunded payment.
+        already = existing_decisions[0]
+        return RazorpayWebhookResult(
+            event=event,
+            transaction_id=transaction_id,
+            decision=already["action"],
+            refund_issued=False,
+            detail=f"Already decided by an earlier webhook delivery for this transaction ({already['action']}) - "
+            "not re-scored or re-refunded.",
         )
 
     probability = estimate_fraud_probability(
@@ -144,7 +164,9 @@ async def razorpay_webhook(request: Request) -> RazorpayWebhookResult:
     refund_issued = False
     if result.decision == "BLOCK":
         try:
-            create_refund(payment_id, notes={"reason": "riskpilot_block_decision", "transaction_id": transaction_id})
+            await asyncio.to_thread(
+                create_refund, payment_id, notes={"reason": "riskpilot_block_decision", "transaction_id": transaction_id}
+            )
             refund_issued = True
         except RazorpayError as exc:
             # The decision is already recorded either way - a refund-API

@@ -38,6 +38,22 @@ _LIMITS: dict[str, tuple[int, int]] = {
 _EXEMPT_PREFIXES = ("/health",)
 
 
+def _client_ip(request: Request) -> str:
+    """The real end-client IP, not the proxy's - this app is always reached
+    through a single trusted hop (the Next.js /api/* rewrite in dev/Compose,
+    Vercel's own edge in production), which sets X-Forwarded-For to the
+    actual visitor's IP. Without this, every request arriving through that
+    proxy would show request.client.host as the proxy's own IP, collapsing
+    every distinct user behind it into one shared rate-limit bucket per
+    route - trusting the *first* XFF entry (the client-added one, not
+    anything a downstream hop could have appended) is standard practice for
+    exactly one trusted hop like this."""
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 def _bucket_for(path: str) -> tuple[str, int, int]:
     """The matched prefix doubles as the counter's bucket key - two distinct
     routes under the same first path segment (/razorpay/checkout vs
@@ -73,7 +89,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         bucket, max_requests, window_seconds = _bucket_for(path)
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _client_ip(request)
         key = f"{client_ip}:{bucket}"
 
         now = time.monotonic()
