@@ -131,8 +131,24 @@ class ScoringService:
 
     def _reason_codes(self, row: pd.DataFrame, top_n: int = 3) -> list[str]:
         shap_values = self.explainer.shap_values(row)
-        # shap_values is (1, n_features) for a single-output booster.
-        values = shap_values[0] if hasattr(shap_values, "__len__") else shap_values
+        # Explaining self.booster directly (a raw LightGBM Booster, not an
+        # sklearn-wrapped two-class classifier) makes TreeExplainer return
+        # one array of shape (1, n_features) - contributions to the single
+        # margin output, which *is* the fraud-class direction - not the
+        # [class_0_values, class_1_values] list some SHAP versions return
+        # for a wrapped binary classifier (confirmed empirically against
+        # this module's pinned lightgbm/shap versions: shap_values here is
+        # always a plain ndarray, never a list, despite the "output has
+        # changed to a list of ndarray" UserWarning SHAP prints regardless -
+        # that warning fires for the wrapped-classifier code path this
+        # module doesn't take). Handled defensively anyway in case a future
+        # SHAP upgrade changes that for the raw-booster path too - a list
+        # here would otherwise silently score fraud-suppressing (class 0)
+        # contributions as if they were fraud-driving ones.
+        if isinstance(shap_values, list):
+            values = shap_values[-1][0]  # last element is the positive (fraud) class
+        else:
+            values = shap_values[0] if hasattr(shap_values, "__len__") else shap_values
         contributions = list(zip(ALL_FEATURE_COLUMNS, values))
         contributions.sort(key=lambda pair: abs(pair[1]), reverse=True)
 
