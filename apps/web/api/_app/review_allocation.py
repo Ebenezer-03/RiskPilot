@@ -72,7 +72,18 @@ def allocate_reviews(
 
     results = []
     for rank, (candidate, savings) in enumerate(ranked):
-        routed = rank < daily_capacity
+        # A candidate that already reached this allocator by way of the
+        # live decision engine (choose_action picking REVIEW as the global
+        # argmin) always has savings >= 0 by construction - REVIEW was the
+        # global minimum-cost action, so it can't cost more than the best
+        # alternative. This endpoint (POST /review/allocate) also accepts
+        # caller-supplied expected_costs directly, though, with no such
+        # guarantee - without this check, a negative-savings candidate
+        # would still consume review capacity purely because it ranked
+        # highest among a batch of otherwise-worse candidates, which
+        # increases expected loss relative to just taking its own
+        # best_non_review_action outright.
+        routed = rank < daily_capacity and savings > 0
         final_action: Action = "REVIEW" if routed else best_non_review_action(candidate.expected_costs)
         results.append(
             ReviewAllocationResult(
