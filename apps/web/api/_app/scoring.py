@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import ctypes
 import glob
-import os
-import sysconfig
+import logging
+import sys
 from pathlib import Path
 from typing import Any
 
 import joblib
+
+_logger = logging.getLogger(__name__)
 
 
 def _preload_bundled_libgomp() -> None:
@@ -35,18 +37,33 @@ def _preload_bundled_libgomp() -> None:
     manylinux wheel dynamically links against it without bundling it (a
     known upstream packaging gap - microsoft/LightGBM#4484) - importing
     lightgbm there fails with `OSError: libgomp.so.1: cannot open shared
-    object file`. scipy's own manylinux wheel *does* vendor a private copy
-    of libgomp (under scipy.libs/) since scipy needs it too - loading that
-    copy into the process first (RTLD_GLOBAL) satisfies lightgbm's own
-    dlopen of the same soname, since the dynamic linker resolves an
-    already-loaded soname instead of searching the filesystem again. A
-    genuine no-op on Windows/macOS (glob simply won't match anything)."""
-    site_packages = sysconfig.get_paths()["purelib"]
-    for candidate in glob.glob(os.path.join(site_packages, "*.libs", "libgomp*.so*")):
+    object file`. numpy/scipy/scikit-learn's own manylinux wheels vendor a
+    private copy of libgomp (they need OpenMP too, typically under a
+    `<pkg>.libs/` sibling directory) - loading any one of those into the
+    process first (RTLD_GLOBAL) satisfies lightgbm's own dlopen of the same
+    soname, since the dynamic linker resolves an already-loaded soname
+    instead of searching the filesystem again. Searches every sys.path
+    entry (not just site-packages' own default location) since Vercel's
+    "optimizing dependencies" step for large functions can relocate
+    installed packages outside the usual purelib path. A genuine no-op on
+    Windows/macOS (the glob simply won't match anything there)."""
+    candidates: list[str] = []
+    for root in sys.path:
+        if not root:
+            continue
+        candidates.extend(glob.glob(f"{root}/**/libgomp*.so*", recursive=True))
+
+    if not candidates:
+        _logger.warning("libgomp preload: no bundled libgomp*.so* found under any sys.path entry.")
+        return
+
+    for candidate in candidates:
         try:
             ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
+            _logger.info("libgomp preload: loaded %s", candidate)
             return
-        except OSError:
+        except OSError as exc:
+            _logger.warning("libgomp preload: failed to load %s (%s)", candidate, exc)
             continue
 
 
