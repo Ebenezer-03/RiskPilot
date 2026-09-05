@@ -19,11 +19,40 @@ per-function limit.
 
 from __future__ import annotations
 
+import ctypes
+import glob
+import os
+import sysconfig
 from pathlib import Path
 from typing import Any
 
 import joblib
-import lightgbm as lgb
+
+
+def _preload_bundled_libgomp() -> None:
+    """Vercel's Python Functions run on a minimal Linux base image with no
+    system libgomp (GNU OpenMP) installed, but the official `lightgbm`
+    manylinux wheel dynamically links against it without bundling it (a
+    known upstream packaging gap - microsoft/LightGBM#4484) - importing
+    lightgbm there fails with `OSError: libgomp.so.1: cannot open shared
+    object file`. scipy's own manylinux wheel *does* vendor a private copy
+    of libgomp (under scipy.libs/) since scipy needs it too - loading that
+    copy into the process first (RTLD_GLOBAL) satisfies lightgbm's own
+    dlopen of the same soname, since the dynamic linker resolves an
+    already-loaded soname instead of searching the filesystem again. A
+    genuine no-op on Windows/macOS (glob simply won't match anything)."""
+    site_packages = sysconfig.get_paths()["purelib"]
+    for candidate in glob.glob(os.path.join(site_packages, "*.libs", "libgomp*.so*")):
+        try:
+            ctypes.CDLL(candidate, mode=ctypes.RTLD_GLOBAL)
+            return
+        except OSError:
+            continue
+
+
+_preload_bundled_libgomp()
+
+import lightgbm as lgb  # noqa: E402 - must follow the libgomp preload above
 import pandas as pd
 
 from .ml.features import (
