@@ -1,10 +1,12 @@
 {
   "services": {
     "frontend": {
-      "root": "."
+      "root": ".",
+      "framework": "nextjs"
     },
     "backend": {
       "root": "api",
+      "framework": "fastapi",
       "entrypoint": "index:app",
       "functions": {
         "index.py": {
